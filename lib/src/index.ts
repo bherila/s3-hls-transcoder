@@ -49,3 +49,22 @@ export { transcodedOutputExists } from "./dest.js";
 // Output metadata
 export type { OutputMetadata } from "./metadata.js";
 export { readMetadata, writeMetadata } from "./metadata.js";
+
+// Process spawn helper
+export { runProcess } from "./process.js";
+
+// ffmpeg
+export { findFfmpeg, findFfprobe } from "./ffmpeg/binary.js";
+export type { ProbeResult } from "./ffmpeg/probe.js";
+export { probeSource } from "./ffmpeg/probe.js";
+export { extractSignature } from "./ffmpeg/signature.js";
+export type { TranscodeOptions } from "./ffmpeg/transcode.js";
+export { transcodeToHls } from "./ffmpeg/transcode.js";
+
+// Download (stream-and-hash)
+export type { DownloadResult } from "./download.js";
+export { downloadAndHash } from "./download.js";
+
+// Upload
+export type { UploadDirectoryOptions } from "./uploader.js";
+export { uploadDirectory, contentTypeFor } from "./uploader.js";
