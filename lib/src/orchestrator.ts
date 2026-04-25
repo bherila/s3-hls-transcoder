@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { BucketPair, Config, LadderRung } from "./config.js";
+import { runCleanupPass } from "./cleanup.js";
 import { byIdPrefix, formatContentId, masterPlaylistKey } from "./contentId.js";
 import { deleteByIdDirectory, transcodedOutputExists } from "./dest.js";
 import { downloadAndHash } from "./download.js";
@@ -197,6 +198,28 @@ async function runPair(args: {
           sourceKey: source.key,
           error: err instanceof Error ? err.message : String(err),
           stack: err instanceof Error ? err.stack : undefined,
+        });
+      }
+    }
+
+    // Cleanup pass (refcount-aware orphan GC) — runs after transcoding so
+    // any new mappings just written are already counted in refs. Best-effort:
+    // failures are logged but don't fail the pair.
+    if (config.cleanupDeletedSources && Date.now() < budgetEndsAt) {
+      try {
+        await runCleanupPass({
+          sourceClient,
+          destClient,
+          sourceBucket: pair.source.bucket,
+          destBucket: pair.dest.bucket,
+          ...(pair.source.prefix ? { sourcePrefix: pair.source.prefix } : {}),
+          logger,
+          dryRun: config.cleanupDryRun,
+        });
+      } catch (err) {
+        logger.error("cleanup pass failed", {
+          pairIndex,
+          error: err instanceof Error ? err.message : String(err),
         });
       }
     }

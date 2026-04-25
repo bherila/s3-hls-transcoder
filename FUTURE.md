@@ -15,17 +15,17 @@ Trigger to add: storage cost on R2 becomes meaningful, or egress costs become re
 
 CMAF segments produced in v1 are DASH-compatible. Adding DASH = generate a `.mpd` alongside `master.m3u8`, pointing at the same segments. Cost: negligible. Storage cost: zero (no extra segments). Likely added when a non-Apple-ecosystem client surfaces a real need.
 
-## Garbage collection
+## Garbage collection of unreferenced by-id/ directories
 
-Sources can be deleted from the source bucket; mappings can become stale; `by-id/<id>/` directories can become orphaned.
+The cleanup pass (`CLEANUP_DELETED_SOURCES=true`) handles the common case: when sources are deleted, refcount-aware GC removes `by-id/<id>/` once no live mappings reference it.
 
-GC pass:
+What's *still* deferred: a defensive sweep that enumerates `by-id/*/` and removes directories with **zero** mapping references — to recover from corrupted state (interrupted upload that wrote segments but no mapping; manually-deleted mappings; tooling bugs). Implementation:
 
 1. Enumerate `mappings/*.json` → set of referenced content IDs.
 2. Enumerate `by-id/*/` directories.
-3. Delete directories with zero references (with a configurable grace period to handle race conditions with in-flight writes).
+3. Delete directories with zero references (configurable grace period to handle race conditions with in-flight writes).
 
-Cron-able as a separate command. Default: dry-run mode that emits a report to `gc-candidates.json` for human review before destructive action.
+Useful as a separate `gc` command. Default: dry-run that emits a report to `gc-candidates.json` for human review before destructive action.
 
 ## Source-bucket event-driven triggering
 

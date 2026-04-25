@@ -32,6 +32,8 @@ export interface Config {
   budgetMultiplier: number;
   perceptualThreshold: number;
   perceptualDryRun: boolean;
+  cleanupDeletedSources: boolean;
+  cleanupDryRun: boolean;
   maxConcurrency: number;
   logLevel: "debug" | "info" | "warn" | "error";
   platform: Platform;
@@ -82,6 +84,8 @@ export function loadConfig(platform: Platform): Config {
     budgetMultiplier: parseNumber("BUDGET_MULTIPLIER", process.env.BUDGET_MULTIPLIER, 0.75),
     perceptualThreshold: parseNumber("PERCEPTUAL_THRESHOLD", process.env.PERCEPTUAL_THRESHOLD, 0.95),
     perceptualDryRun: process.env.PERCEPTUAL_DRY_RUN === "true",
+    cleanupDeletedSources: process.env.CLEANUP_DELETED_SOURCES === "true",
+    cleanupDryRun: process.env.CLEANUP_DRY_RUN === "true",
     maxConcurrency: parseNumber("MAX_CONCURRENCY", process.env.MAX_CONCURRENCY, 1),
     logLevel: parseLogLevel(process.env.LOG_LEVEL),
     platform,

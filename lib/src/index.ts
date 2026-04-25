@@ -107,3 +107,7 @@ export {
 // Orchestrator
 export type { OrchestratorOptions, RunSummary } from "./orchestrator.js";
 export { runOnce } from "./orchestrator.js";
+
+// Cleanup pass (refcount-aware orphan GC)
+export type { CleanupOptions, CleanupResult } from "./cleanup.js";
+export { runCleanupPass } from "./cleanup.js";

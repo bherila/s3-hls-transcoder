@@ -229,6 +229,8 @@ Each pair JSON object:
 | `BUDGET_MULTIPLIER`        | no       | `0.75`           | Budget = `MAX_RUNTIME × this`                                            |
 | `PERCEPTUAL_THRESHOLD`     | no       | `0.95`           | Similarity score required for dedup match                                |
 | `PERCEPTUAL_DRY_RUN`       | no       | `false`          | If `true`, log would-be merges instead of acting                         |
+| `CLEANUP_DELETED_SOURCES`  | no       | `false`          | If `true`, run a refcount-aware orphan-mapping GC pass each invocation   |
+| `CLEANUP_DRY_RUN`          | no       | `false`          | If `true`, cleanup pass logs without deleting                            |
 | `MAX_CONCURRENCY`          | no       | `1`              | Source files processed in parallel within one run                        |
 | `LOG_LEVEL`                | no       | `info`           | `debug` / `info` / `warn` / `error`                                      |
 
@@ -274,7 +276,6 @@ Each pair JSON object:
 
 - HEVC / AV1 codecs
 - DASH manifest generation alongside HLS
-- Garbage collection of orphaned `by-id/` directories
 - Source-bucket event-driven (rather than poll) triggering
 - Per-job retry / resume across runs
 - Web UI / status page
