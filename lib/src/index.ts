@@ -24,3 +24,28 @@ export {
   computeBudgetSeconds,
 } from "./lock.js";
 export { acquireLease, leaseKey } from "./lease.js";
+
+// Content addressing
+export type { ContentIdScheme } from "./contentId.js";
+export {
+  formatContentId,
+  parseContentId,
+  byIdPrefix,
+  masterPlaylistKey,
+  metadataKey,
+} from "./contentId.js";
+
+// Source bucket scanning
+export type { SourceObject, ScanOptions } from "./scanner.js";
+export { scanSource, isVideoKey } from "./scanner.js";
+
+// Source byte hashing
+export type { HashedSource } from "./hasher.js";
+export { hashSource } from "./hasher.js";
+
+// Destination existence check
+export { transcodedOutputExists } from "./dest.js";
+
+// Output metadata
+export type { OutputMetadata } from "./metadata.js";
+export { readMetadata, writeMetadata } from "./metadata.js";
