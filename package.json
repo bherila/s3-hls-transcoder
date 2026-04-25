@@ -1,0 +1,16 @@
+{
+  "name": "s3-hsts-transcoder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted HLS video transcoder for S3-compatible buckets",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r clean"
+  },
+  "packageManager": "pnpm@10.20.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

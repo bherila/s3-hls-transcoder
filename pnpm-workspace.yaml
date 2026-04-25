@@ -1,0 +1,5 @@
+packages:
+  - lib
+  - aws
+  - cloudflare
+  - local
