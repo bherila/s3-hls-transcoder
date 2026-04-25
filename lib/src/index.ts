@@ -1,4 +1,5 @@
-export const VERSION = "0.1.0";
+// Version
+export { VERSION } from "./version.js";
 
 // Config
 export type { Config, BucketConfig, LadderRung, Platform } from "./config.js";
@@ -68,3 +69,33 @@ export { downloadAndHash } from "./download.js";
 // Upload
 export type { UploadDirectoryOptions } from "./uploader.js";
 export { uploadDirectory, contentTypeFor } from "./uploader.js";
+
+// Perceptual fingerprint
+export type { VideoFingerprint } from "./fingerprint.js";
+export {
+  fingerprintVideo,
+  fingerprintSimilarity,
+  serializeFingerprint,
+  deserializeFingerprint,
+  popcount64,
+} from "./fingerprint.js";
+
+// Fingerprint index
+export type {
+  FingerprintIndex,
+  FingerprintIndexEntry,
+  PerceptualMatch,
+} from "./fingerprintIndex.js";
+export {
+  readIndex,
+  writeIndex,
+  upsertIndexEntry,
+  uploadFingerprint,
+  readFingerprint,
+  findPerceptualMatch,
+  fingerprintKey,
+} from "./fingerprintIndex.js";
+
+// Orchestrator
+export type { OrchestratorOptions, RunSummary } from "./orchestrator.js";
+export { runOnce } from "./orchestrator.js";

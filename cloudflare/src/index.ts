@@ -1,8 +1,21 @@
-import { VERSION } from "@s3-hsts-transcoder/lib";
+import {
+  createLogger,
+  createS3Client,
+  loadConfig,
+  runOnce,
+  VERSION,
+} from "@s3-hsts-transcoder/lib";
 
 async function main(): Promise<void> {
-  console.log(`s3-hsts-transcoder cloudflare container starting (lib v${VERSION})`);
-  // TODO: implement transcoding pipeline (see PLAN.md).
+  const config = loadConfig("cloudflare-container");
+  const logger = createLogger(config.logLevel);
+  logger.info("transcoder starting", { platform: "cloudflare-container", lib: VERSION });
+
+  const sourceClient = createS3Client(config.source);
+  const destClient = createS3Client(config.dest);
+
+  const summary = await runOnce({ config, sourceClient, destClient, logger });
+  if (summary.failed > 0) process.exitCode = 1;
 }
 
 main().catch((err) => {
