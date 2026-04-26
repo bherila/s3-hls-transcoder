@@ -20,7 +20,7 @@ docker build -f cloudflare/Dockerfile -t s3-hsts-transcoder-cf .
 
 1. Copy [`wrangler.jsonc.example`](./wrangler.jsonc.example) to `wrangler.jsonc` and fill in details.
 2. Push the container image to a registry that Cloudflare can pull from (or rely on `wrangler` to build + push for you, depending on current CF Containers tooling).
-3. Implement `src/worker.ts` — a Durable Object that owns the container plus a `scheduled` cron handler that triggers it. **This shim is not yet in the repo**; see `wrangler.jsonc.example` for the contract.
+3. Review [`src/worker.ts`](./src/worker.ts) — a skeleton Durable Object + `scheduled` cron handler. It carries `@ts-nocheck` and is excluded from `tsc` because the Cloudflare Containers binding surface is still moving; verify against [the current docs](https://developers.cloudflare.com/containers/) before deploying.
 4. `pnpm wrangler deploy`.
 
 > **Heads up:** the Containers + Durable Objects + Worker wiring is still evolving. Verify the binding syntax and DO/Container interaction against [developers.cloudflare.com/containers/](https://developers.cloudflare.com/containers/) before deploying.

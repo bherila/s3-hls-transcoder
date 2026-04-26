@@ -21,4 +21,14 @@ export default tseslint.config(
       "no-empty": ["error", { allowEmptyCatch: true }],
     },
   },
+  {
+    // The Cloudflare worker shim runs in a different runtime than the rest
+    // of the workspace and references types we don't install (DurableObject,
+    // Container, etc). Skeleton only — verified manually at deploy time.
+    files: ["cloudflare/src/worker.ts"],
+    rules: {
+      "@typescript-eslint/ban-ts-comment": "off",
+      "@typescript-eslint/no-unused-vars": "off",
+    },
+  },
 );
