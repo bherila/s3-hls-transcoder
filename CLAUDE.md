@@ -60,5 +60,7 @@ H.264 Main + AAC. Default rungs: 360p / 480p / 720p / 1080p. Skip rungs above so
 ## Where to look
 
 - Architecture, env vars, decisions: [PLAN.md](./PLAN.md)
+- Behavioral contract: [SPEC.md](./SPEC.md)
+- Testing guide (how to run, mock strategy, what's covered): [TESTING.md](./TESTING.md)
 - Deferred features: [FUTURE.md](./FUTURE.md)
 - Per-platform setup: each entrypoint's `README.md`
