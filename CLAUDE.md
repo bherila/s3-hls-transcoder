@@ -20,10 +20,6 @@ local/       ← cron entrypoint (laptop / VPS / AWS Lightsail)
 
 Entrypoints depend on `lib` via `workspace:*` and call into it; they only contain platform glue.
 
-## Naming
-
-The repo is named `s3-hls-transcoder`. The format is **HLS** (HTTP Live Streaming). Don't introduce more "HSTS" naming in code or docs — fix any you find.
-
 ## Bucket conventions
 
 - Configuration supports **multiple source/destination pairs** in a single run; orchestrator processes them sequentially. Each pair has independent credentials with cascade: bucket-level → pair-level → env-level (`SOURCE_*` / `DEST_*`).

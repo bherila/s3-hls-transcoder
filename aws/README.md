@@ -103,6 +103,126 @@ aws events put-targets \
 
 To **update** after a code change: rebuild + push the image, then `aws lambda update-function-code --function-name s3-hls-transcoder --image-uri $IMAGE_URI`.
 
+## Alternative: event-driven triggering (S3 → SQS or SNS → Lambda)
+
+The EventBridge cron polls on a fixed schedule. If you want to trigger a transcoding pass automatically when a video is uploaded to the source bucket, you can use S3 event notifications instead of (or alongside) the cron rule.
+
+**How it works**: the Lambda still scans the whole source bucket on each invocation and uses the global lock to prevent concurrent runs. The S3 event just wakes it up sooner. Multiple upload events arriving in quick succession are harmless — the second and later invocations will see the lock held and exit cleanly.
+
+### Option A — S3 → SQS → Lambda (recommended)
+
+SQS decouples the event from the invocation and batches rapid-fire uploads into fewer Lambda runs.
+
+```sh
+# 1. Create the queue.
+SQS_ARN=$(aws sqs create-queue \
+  --queue-name s3-hls-transcoder-events \
+  --attributes '{"VisibilityTimeout":"900"}' \
+  --query 'QueueUrl' --output text \
+  | xargs aws sqs get-queue-attributes \
+      --attribute-names QueueArn \
+      --query 'Attributes.QueueArn' --output text)
+
+# 2. Allow S3 to send messages to the queue.
+#    Replace SOURCE_BUCKET with your actual bucket name.
+aws sqs set-queue-attributes \
+  --queue-url $(aws sqs get-queue-url --queue-name s3-hls-transcoder-events --query QueueUrl --output text) \
+  --attributes "{
+    \"Policy\": \"{\\\"Version\\\":\\\"2012-10-17\\\",\\\"Statement\\\":[{\\\"Effect\\\":\\\"Allow\\\",\\\"Principal\\\":{\\\"Service\\\":\\\"s3.amazonaws.com\\\"},\\\"Action\\\":\\\"sqs:SendMessage\\\",\\\"Resource\\\":\\\"$SQS_ARN\\\",\\\"Condition\\\":{\\\"ArnLike\\\":{\\\"aws:SourceArn\\\":\\\"arn:aws:s3:::SOURCE_BUCKET\\\"}}}]}\"
+  }"
+
+# 3. Enable S3 event notifications on the source bucket.
+#    Filters to common video extensions; adjust as needed.
+aws s3api put-bucket-notification-configuration \
+  --bucket SOURCE_BUCKET \
+  --notification-configuration "{
+    \"QueueConfigurations\": [{
+      \"QueueArn\": \"$SQS_ARN\",
+      \"Events\": [\"s3:ObjectCreated:*\"],
+      \"Filter\": {
+        \"Key\": {
+          \"FilterRules\": [
+            {\"Name\": \"suffix\", \"Value\": \".mp4\"}
+          ]
+        }
+      }
+    }]
+  }"
+
+# 4. Grant the Lambda role permission to consume from the queue.
+aws iam put-role-policy --role-name s3-hls-transcoder \
+  --policy-name s3-hls-transcoder-sqs \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes"],
+      "Resource": "'"$SQS_ARN"'"
+    }]
+  }'
+
+# 5. Wire the queue as a Lambda event source.
+#    batch-size=1 means one upload = one Lambda invocation (conservative; raise if uploads are bursty).
+aws lambda create-event-source-mapping \
+  --function-name s3-hls-transcoder \
+  --event-source-arn $SQS_ARN \
+  --batch-size 1
+```
+
+The Lambda handler ignores the SQS event payload — it only uses it as a wake-up signal and then scans the full source bucket normally. You can add filters for other extensions (`.mov`, `.mkv`, etc.) by adding more `QueueConfigurations` or using a wildcard suffix filter.
+
+### Option B — S3 → SNS → Lambda (fan-out)
+
+Use SNS if you want to notify other systems (e.g., a monitoring topic) at the same time.
+
+```sh
+# 1. Create the topic.
+SNS_ARN=$(aws sns create-topic --name s3-hls-transcoder-events \
+  --query TopicArn --output text)
+
+# 2. Allow S3 to publish to the topic.
+aws sns set-topic-attributes --topic-arn $SNS_ARN \
+  --attribute-name Policy \
+  --attribute-value "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [{
+      \"Effect\": \"Allow\",
+      \"Principal\": {\"Service\": \"s3.amazonaws.com\"},
+      \"Action\": \"sns:Publish\",
+      \"Resource\": \"$SNS_ARN\",
+      \"Condition\": {\"ArnLike\": {\"aws:SourceArn\": \"arn:aws:s3:::SOURCE_BUCKET\"}}
+    }]
+  }"
+
+# 3. Subscribe the Lambda function to the topic.
+aws sns subscribe \
+  --topic-arn $SNS_ARN \
+  --protocol lambda \
+  --notification-endpoint arn:aws:lambda:$AWS_REGION:$ACCOUNT_ID:function:s3-hls-transcoder
+
+# 4. Allow SNS to invoke the Lambda.
+aws lambda add-permission \
+  --function-name s3-hls-transcoder \
+  --statement-id sns-invoke \
+  --action lambda:InvokeFunction \
+  --principal sns.amazonaws.com \
+  --source-arn $SNS_ARN
+
+# 5. Enable S3 event notifications on the source bucket.
+aws s3api put-bucket-notification-configuration \
+  --bucket SOURCE_BUCKET \
+  --notification-configuration "{
+    \"TopicConfigurations\": [{
+      \"TopicArn\": \"$SNS_ARN\",
+      \"Events\": [\"s3:ObjectCreated:*\"]
+    }]
+  }"
+```
+
+### Combining cron + events
+
+You can keep the EventBridge cron rule alongside event-driven triggering. The cron acts as a catch-all for uploads that happened while the function was already running (and thus locked). The global lock ensures only one scan runs at a time regardless of how the Lambda is triggered.
+
 ## Local test (optional)
 
 The Lambda Runtime Interface Emulator runs the image locally:

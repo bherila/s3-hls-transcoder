@@ -32,26 +32,30 @@ S3 error stubs use `S3ServiceException` directly — construct them with `name`,
 
 ## What is and isn't covered
 
-| Area                                    | Covered | Notes                        |
-| --------------------------------------- | ------- | ---------------------------- |
-| Lock acquire / stale takeover / release | Yes     | `lock.s3mock.test.ts`        |
-| Mapping read / write / dedup check      | Yes     | `mapping.s3mock.test.ts`     |
-| Content ID (SHA-256 scheme prefix)      | Yes     | `contentId.test.ts`          |
-| Fingerprint math + serialization        | Yes     | `fingerprint.test.ts`        |
-| Config parsing + overlap validation     | Yes     | `config.test.ts`             |
-| Scanner (S3 list)                       | Yes     | `scanner.test.ts`            |
-| Uploader                                | Yes     | `uploader.test.ts`           |
-| ffmpeg transcode / probe / signature    | **No**  | Requires real binary         |
-| Full orchestrator pipeline              | **No**  | Integration test — see below |
-| Real S3 / R2 / MinIO round-trip         | **No**  | Integration test — see below |
+| Area                                    | Covered | Notes                                              |
+| --------------------------------------- | ------- | -------------------------------------------------- |
+| Lock acquire / stale takeover / release | Yes     | `lock.s3mock.test.ts`                              |
+| Mapping read / write / dedup check      | Yes     | `mapping.s3mock.test.ts`                           |
+| Content ID (SHA-256 scheme prefix)      | Yes     | `contentId.test.ts`                                |
+| Fingerprint math + serialization        | Yes     | `fingerprint.test.ts`                              |
+| Config parsing + overlap validation     | Yes     | `config.test.ts`                                   |
+| Scanner (S3 list)                       | Yes     | `scanner.test.ts`                                  |
+| Uploader                                | Yes     | `uploader.test.ts`                                 |
+| ffmpeg transcode / probe / signature    | **No**  | Requires real binary; covered by integration tests |
+| Full orchestrator pipeline              | **Yes** | `integration/` — see below                         |
+| Real S3 / R2 / MinIO round-trip         | **Yes** | `integration/` — see below                         |
 
 ## Integration tests
 
-Not yet implemented. A GitHub issue template exists for the MinIO integration test. When added, integration tests should:
+Live in `integration/`. Uses Testcontainers to spin up a real MinIO instance; generates a 5-second fixture MP4 via ffmpeg; runs the full `runOnce()` pipeline and asserts outputs (master.m3u8, mapping file, lock released, second run returns cached, etc.).
 
-- Live in a separate package or directory (not mixed with unit tests)
-- Require a running MinIO instance (Docker)
-- Gate on an env var (e.g. `INTEGRATION=1`) so they don't run in standard `pnpm test`
+**Requirements**: Docker daemon running, `ffmpeg` on PATH (or `FFMPEG_PATH` set).
+
+```sh
+INTEGRATION=1 pnpm --filter @s3-hls-transcoder/integration test
+```
+
+Not run by `pnpm test` — they are excluded from the standard recursive run because they need Docker and ffmpeg.
 
 ## Adding new tests
 

@@ -4,8 +4,6 @@
 
 Self-hosted video transcoder. Scans an S3-compatible source bucket on a cron schedule and produces HLS streaming output in a destination bucket. Runs on AWS Lambda, Cloudflare Containers, or any local/VPS host (AWS Lightsail recommended). Avoids per-minute pricing of hosted services like Cloudflare Stream or AWS MediaConvert.
 
-> The repo directory is named `s3-hls-transcoder`. The output format is **HLS** (HTTP Live Streaming) — the "HSTS" in the directory name is a leftover from initial scoping; HSTS is unrelated to streaming.
-
 ## Architecture
 
 Shared TypeScript library + three thin platform entrypoints. All entrypoints run the same transcoding pipeline; they differ only in trigger mechanism, environment, runtime cap, and how ffmpeg is provided.
@@ -62,7 +60,7 @@ videos_source/
 Destination bucket:
 
 ```
-videos_hsts/
+videos_hls/
   .transcoder.lock                  ← global single-runner lock
   by-id/
     sha256:<hash>/                  ← v1 byte-hash content IDs
@@ -103,7 +101,7 @@ Client lookup: `GET <bucket>/mappings/<source-path>.json` → read `hlsRoot` →
 
 For each cron invocation:
 
-1. **Acquire global lock** at `videos_hsts/.transcoder.lock` (atomic conditional PUT). If held by a live worker, exit. If stale, claim it.
+1. **Acquire global lock** at `videos_hls/.transcoder.lock` (atomic conditional PUT). If held by a live worker, exit. If stale, claim it.
 2. List `videos_source/` (paginated).
 3. For each source key, in order, while runtime budget remains:
    1. **HEAD source** → ETag, size, last-modified.
@@ -126,7 +124,7 @@ Two layers.
 
 ### Global single-runner lock
 
-Object key: `videos_hsts/.transcoder.lock`.
+Object key: `videos_hls/.transcoder.lock`.
 
 Acquisition uses S3 conditional PUT with `If-None-Match: *` (atomic; supported by R2 and modern S3 since Nov 2024).
 
@@ -269,10 +267,10 @@ Each pair JSON object:
 
 ## Testing
 
-- **Unit tests** in `lib/` for: hash flow, fingerprint comparison, mapping I/O, ladder validation, lock acquisition logic, lease semantics. Vitest.
-- **Integration tests** with a local MinIO container (S3-compatible) + a small fixture set of test videos.
-- Each entrypoint has its own smoke test for platform-specific glue.
-- Root `package.json` script `test` runs all package tests via `pnpm -r test`.
+- **Unit tests** in `lib/src/` — hash flow, fingerprint math + serialization, mapping I/O, config parsing + overlap validation, lock acquisition + stale takeover + release, scanner, uploader. All run via `pnpm test` with no real S3 or ffmpeg required (S3 paths use `aws-sdk-client-mock`).
+- **Integration tests** in `integration/` — end-to-end `runOnce()` against a live MinIO container via Testcontainers. Gated on `INTEGRATION=1`; requires Docker and ffmpeg on PATH. Run with `INTEGRATION=1 pnpm --filter @s3-hls-transcoder/integration test`.
+- See [TESTING.md](./TESTING.md) for mocking strategy, test naming conventions, and CI notes.
+- Root `package.json` script `test` runs all package unit tests via `pnpm -r test`. Integration tests are intentionally excluded from this command.
 
 ## Out of scope (see [FUTURE.md](./FUTURE.md))
 
