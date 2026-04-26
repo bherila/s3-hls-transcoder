@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Project: HLS video transcoder for S3-compatible buckets. Read **[PLAN.md](./PLAN.md)** for full architecture; this file is the short version of conventions you'll need.
+Project: HLS video transcoder for S3-compatible buckets. Read **[PLAN.md](./PLAN.md)** for architecture and **[SPEC.md](./SPEC.md)** for the implemented behavioral contract; this file is the short version of conventions you'll need.
 
 ## Stack
 
