@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# Cancel superseded PR runs to save runner minutes; never cancel main runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
 
 jobs:
   build:
