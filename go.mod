@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.28
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
 	github.com/aws/smithy-go v1.27.2
+	github.com/redis/go-redis/v9 v9.20.1
 )
 
 require (
@@ -19,4 +20,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.22 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.29 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.29 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
 )
