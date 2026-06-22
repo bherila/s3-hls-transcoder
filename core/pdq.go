@@ -65,7 +65,24 @@ func ComputePDQ(ctx context.Context, input string) (PDQResult, error) {
 	if err != nil {
 		return PDQResult{}, fmt.Errorf("%w\nstdout: %s", err, tail(stdout.String(), 1000))
 	}
+	// The pdq-photo-hasher CLI exits 0 and prints the default all-zero hash when
+	// it cannot decode the image (it doesn't check its own decode return). Treat
+	// that as a failure so the source is retried/tombstoned rather than getting a
+	// durable bogus mapping — many undecodable inputs would otherwise collapse to
+	// the same all-zero hash and look like near-duplicates of each other.
+	if isAllZeroHex(res.Hash) {
+		return PDQResult{}, fmt.Errorf("pdq hasher returned an all-zero hash (image likely undecodable)\nstderr: %s", tail(stderr.String(), 1000))
+	}
 	return res, nil
+}
+
+func isAllZeroHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] != '0' {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 var hex64Pattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)

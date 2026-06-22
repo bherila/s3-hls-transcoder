@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
@@ -39,6 +41,13 @@ type ImageMapping struct {
 // ImageMappingKey is the dest-bucket key for a source key's PDQ mapping.
 func ImageMappingKey(sourceKey string) string {
 	return imageMappingPrefix + sourceKey + imageMappingSuffix
+}
+
+func sourceKeyFromImageMappingKey(key string) (string, bool) {
+	if !strings.HasPrefix(key, imageMappingPrefix) || !strings.HasSuffix(key, imageMappingSuffix) {
+		return "", false
+	}
+	return key[len(imageMappingPrefix) : len(key)-len(imageMappingSuffix)], true
 }
 
 // ReadImageMapping returns the PDQ mapping for a source key, or nil if none exists.
@@ -154,7 +163,80 @@ func runImagePair(ctx context.Context, a pairArgs) (pairResult, bool) {
 		}
 	}
 
+	if a.cfg.CleanupDeletedSources && time.Now().Before(a.budgetEndsAt) {
+		if _, err := RunImageCleanupPass(ctx, CleanupOptions{
+			SourceClient: a.sourceClient, DestClient: a.destClient,
+			SourceBucket: a.pair.Source.Bucket, DestBucket: a.pair.Dest.Bucket,
+			SourcePrefix: a.pair.Source.Prefix, Logger: a.logger, DryRun: a.cfg.CleanupDryRun,
+		}); err != nil {
+			a.logger.Error("image cleanup pass failed", Fields{"pairIndex": a.pairIndex, "error": err.Error()})
+		}
+	}
+
 	return res, true
+}
+
+// RunImageCleanupPass deletes image-mapping objects whose source image no longer
+// exists in the source bucket. Unlike the video cleanup it needs no refcounting:
+// each mapping is a row-private hash with no shared output tree to GC.
+func RunImageCleanupPass(ctx context.Context, opts CleanupOptions) (CleanupResult, error) {
+	opts.Logger.Info("image cleanup: enumerating live source keys", Fields{"sourceBucket": opts.SourceBucket})
+	liveSources := map[string]bool{}
+	for obj, err := range ScanSource(ctx, opts.SourceClient, opts.SourceBucket, ScanOptions{
+		Prefix: opts.SourcePrefix, Filter: func(string) bool { return true },
+	}) {
+		if err != nil {
+			return CleanupResult{}, err
+		}
+		liveSources[obj.Key] = true
+	}
+
+	var res CleanupResult
+	var token *string
+	for {
+		out, err := opts.DestClient.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(opts.DestBucket), Prefix: aws.String(imageMappingPrefix), ContinuationToken: token,
+		})
+		if err != nil {
+			return res, err
+		}
+		for _, o := range out.Contents {
+			if o.Key == nil || !strings.HasSuffix(*o.Key, imageMappingSuffix) {
+				continue
+			}
+			sourceKey, ok := sourceKeyFromImageMappingKey(*o.Key)
+			if !ok {
+				continue
+			}
+			if opts.SourcePrefix != "" && !strings.HasPrefix(sourceKey, opts.SourcePrefix) {
+				continue
+			}
+			if liveSources[sourceKey] {
+				continue
+			}
+			res.OrphanMappingsFound++
+			if opts.DryRun {
+				res.OrphanMappingsDeleted++
+				continue
+			}
+			if _, err := opts.DestClient.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(opts.DestBucket), Key: aws.String(*o.Key),
+			}); err != nil {
+				return res, err
+			}
+			res.OrphanMappingsDeleted++
+		}
+		if out.IsTruncated != nil && *out.IsTruncated && out.NextContinuationToken != nil {
+			token = out.NextContinuationToken
+		} else {
+			break
+		}
+	}
+
+	opts.Logger.Info("image cleanup pass complete", Fields{
+		"orphanMappingsFound": res.OrphanMappingsFound, "orphanMappingsDeleted": res.OrphanMappingsDeleted, "dryRun": opts.DryRun,
+	})
+	return res, nil
 }
 
 func processImage(ctx context.Context, a pairArgs, source SourceObject) (processOutcome, error) {

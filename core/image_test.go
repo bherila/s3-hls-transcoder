@@ -42,6 +42,20 @@ func TestImageMappingKey(t *testing.T) {
 	}
 }
 
+func TestSourceKeyFromImageMappingKey(t *testing.T) {
+	key := ImageMappingKey("uploads/0/x.jpg")
+	got, ok := sourceKeyFromImageMappingKey(key)
+	if !ok || got != "uploads/0/x.jpg" {
+		t.Errorf("roundtrip failed: got %q ok=%v", got, ok)
+	}
+	if _, ok := sourceKeyFromImageMappingKey("mappings/uploads/0/x.jpg.json"); ok {
+		t.Error("a video mapping key should not parse as an image mapping key")
+	}
+	if _, ok := sourceKeyFromImageMappingKey("image-mappings/x.txt"); ok {
+		t.Error("a non-.json key should not parse")
+	}
+}
+
 func TestIsCachedImageMapping(t *testing.T) {
 	m := &ImageMapping{SourceEtag: "abc", SourceSize: 100}
 	if !IsCachedImageMapping(m, "abc", 100) {
