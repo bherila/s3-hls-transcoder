@@ -1,6 +1,9 @@
 package core
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParsePDQOutput(t *testing.T) {
 	const hash = "f8f8f0f0e0e0c0c08080000011112222333344445555666677778888999900aa"
@@ -34,6 +37,18 @@ func TestParsePDQOutput(t *testing.T) {
 				t.Errorf("quality = %d, want %d", res.Quality, c.wantQuality)
 			}
 		})
+	}
+}
+
+func TestIsAllZeroHex(t *testing.T) {
+	if !isAllZeroHex(strings.Repeat("0", 64)) {
+		t.Error("64 zeros should be all-zero")
+	}
+	if isAllZeroHex("") {
+		t.Error("empty string is not an all-zero hash")
+	}
+	if isAllZeroHex(strings.Repeat("0", 63) + "1") {
+		t.Error("a single non-zero nibble means not all-zero")
 	}
 }
 
