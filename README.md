@@ -9,6 +9,23 @@ Self-hosted video transcoder. Watches an S3-compatible source bucket and produce
 - [`cloudflare/`](./cloudflare) — Cloudflare Containers entrypoint
 - [`local/`](./local) — local / VPS / AWS Lightsail cron entrypoint
 
+### Workers
+
+The Go core (`core/`) backs two entrypoints under `cmd/`, sharing the same
+configuration, dest-bucket locking, source scanning, per-source mapping cache,
+error tombstones, runtime budget, and trigger modes (cron one-shot / poll /
+Redis-wake — see `core.Serve`):
+
+- **`cmd/transcoder`** — video → HLS (shells out to ffmpeg). Writes
+  `mappings/<key>.json` → content-addressed `by-id/<id>/`.
+- **`cmd/imagehasher`** — image → PDQ perceptual hash (shells out to the C++
+  `pdq-photo-hasher` tool, exactly as the transcoder shells out to ffmpeg).
+  Point `SOURCE_*` at an image bucket and `DEST_*` at a results bucket; it
+  writes `image-mappings/<key>.json` whose `pdqHash` field a consuming app reads
+  for near-duplicate detection. The worker computes hashes only — all duplicate
+  decisioning stays in the consuming app. Requires the `pdq-photo-hasher` binary
+  on `PATH` (or `PDQ_HASHER_PATH`); see [`Dockerfile.imagehasher`](./Dockerfile.imagehasher).
+
 Each package has its own README with platform-specific setup. Configuration is via environment variables; see [`local/.env.sample`](./local/.env.sample) for the canonical list.
 
 ## Prerequisites

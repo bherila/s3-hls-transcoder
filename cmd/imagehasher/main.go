@@ -1,13 +1,21 @@
-// Command transcoder runs the HLS transcoder. It supports three trigger modes,
-// selected by environment (see core.Serve):
+// Command imagehasher computes PDQ perceptual hashes for images in a source
+// bucket and writes them to a results bucket for an app to read. It is the image
+// sibling of the transcoder: same configuration, locking, scanning, caching, and
+// trigger modes (see core.Serve), but the per-object work is a PDQ hash instead
+// of a transcode. It shells out to the C++ pdq-photo-hasher tool, exactly as the
+// transcoder shells out to ffmpeg.
+//
+// Trigger modes (selected by environment):
 //
 //   - one-shot (cron): no REDIS_URL and no POLL_FALLBACK_SECONDS — run a single
 //     pass and exit (non-zero if any source failed).
 //   - poll: POLL_FALLBACK_SECONDS set, no REDIS_URL — run a pass, sleep, repeat.
-//   - wake (recommended co-located with the app): REDIS_URL set — run a pass,
-//     then BLPOP TRANSCODE_QUEUE with POLL_FALLBACK_SECONDS as a safety-net
-//     timeout. The app LPUSHes on upload, so HLS appears within seconds, while
-//     the timeout still guarantees a periodic sweep.
+//   - wake: REDIS_URL set — run a pass, then BLPOP PDQ_QUEUE with
+//     POLL_FALLBACK_SECONDS as a safety-net timeout, so a pushed request is
+//     hashed within seconds while the timeout still guarantees a periodic sweep.
+//
+// Point SOURCE_* at the image bucket and DEST_* at the results bucket. The app
+// reads image-mappings/<source-key>.json and uses its pdqHash field.
 package main
 
 import (
@@ -23,12 +31,11 @@ import (
 func main() {
 	cfg, err := core.LoadConfig(core.PlatformLocal)
 	if err != nil {
-		// No logger yet (log level lives in config); fail loudly to stderr.
 		os.Stderr.WriteString("config error: " + err.Error() + "\n")
 		os.Exit(1)
 	}
 	logger := core.NewLogger(cfg.LogLevel)
-	logger.Info("transcoder starting", core.Fields{"platform": "local", "version": core.Version, "pairs": len(cfg.Pairs)})
+	logger.Info("imagehasher starting", core.Fields{"platform": "local", "version": core.Version, "pairs": len(cfg.Pairs)})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -36,10 +43,10 @@ func main() {
 	opts := core.ServeOptions{
 		Logger:          logger,
 		RedisURL:        os.Getenv("REDIS_URL"),
-		Queue:           getenv("TRANSCODE_QUEUE", "transcode:requests"),
+		Queue:           getenv("PDQ_QUEUE", "pdq:requests"),
 		FallbackSeconds: envInt("POLL_FALLBACK_SECONDS", 0),
 		Run: func(ctx context.Context) core.RunSummary {
-			return core.RunOnce(ctx, core.OrchestratorOptions{Config: cfg, Logger: logger})
+			return core.RunImagesOnce(ctx, core.OrchestratorOptions{Config: cfg, Logger: logger})
 		},
 	}
 
