@@ -1,0 +1,47 @@
+# imagehasher — PDQ perceptual image hashing. Like the transcoder image, the
+# orchestration is a static CGO-free Go binary; the heavy image work is a native
+# tool it execs. Here that tool is the C++ `pdq-photo-hasher` from
+# Facebook/ThreatExchange (the canonical PDQ implementation), with ImageMagick
+# providing image decoding for its CImg-based loader at runtime — mirroring how
+# the transcoder pairs Go with ffmpeg.
+#
+# This image is intentionally separate from ./Dockerfile (the transcoder) so the
+# transcoder image stays lean and its publish pipeline is unaffected. Build:
+#   docker build -f Dockerfile.imagehasher -t s3-hls-imagehasher .
+
+# --- Go orchestrator -------------------------------------------------------
+FROM --platform=$BUILDPLATFORM golang:1.24 AS gobuild
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY core ./core
+COPY cmd ./cmd
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w" -o /out/imagehasher ./cmd/imagehasher
+
+# --- C++ PDQ hasher --------------------------------------------------------
+# The upstream Makefile target is `pdq-photo-hasher` (g++ -std=c++11, links only
+# -lm -lpthread; image decoding is delegated to ImageMagick at runtime via CImg).
+# Pin THREATEXCHANGE_REF to a commit for reproducible builds when needed.
+FROM debian:bookworm-slim AS pdqbuild
+ARG THREATEXCHANGE_REF=main
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        g++ make git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "${THREATEXCHANGE_REF}" \
+        https://github.com/facebook/ThreatExchange.git /src
+WORKDIR /src/pdq/cpp
+RUN make pdq-photo-hasher
+
+# --- Runtime ---------------------------------------------------------------
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        imagemagick ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=pdqbuild /src/pdq/cpp/pdq-photo-hasher /usr/local/bin/pdq-photo-hasher
+COPY --from=gobuild /out/imagehasher /usr/local/bin/imagehasher
+# tini reaps zombies (pdq-photo-hasher / ImageMagick subprocesses) and forwards
+# SIGTERM so docker stop / k8s drains cleanly.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/imagehasher"]
