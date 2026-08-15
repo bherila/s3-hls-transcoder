@@ -140,6 +140,8 @@ describe.skipIf(!INTEGRATION)("runOnce() integration", () => {
       cleanupDeletedSources: false,
       cleanupDryRun: false,
       maxConcurrency: 1,
+      maxSourceSizeBytes: 1024 * 1024 * 1024,
+      maxVideoDurationSeconds: 60,
       logLevel: "info",
       platform: "local",
     };

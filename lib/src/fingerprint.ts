@@ -21,10 +21,19 @@ export interface VideoFingerprint {
   intervalSeconds: number;
 }
 
+export interface FingerprintOptions {
+  intervalSeconds?: number;
+  maxFrames?: number;
+  timeoutMs?: number;
+}
+
 export async function fingerprintVideo(
   input: string,
-  intervalSeconds: number = 2,
+  options: FingerprintOptions | number = {},
 ): Promise<VideoFingerprint> {
+  const intervalSeconds = typeof options === "number" ? options : (options.intervalSeconds ?? 2);
+  const maxFrames = typeof options === "number" ? undefined : options.maxFrames;
+  const timeoutMs = typeof options === "number" ? undefined : options.timeoutMs;
   const ffmpeg = findFfmpeg();
   const args = [
     "-i",
@@ -40,30 +49,65 @@ export async function fingerprintVideo(
 
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpeg, args, { stdio: ["ignore", "pipe", "pipe"] });
-    const chunks: Buffer[] = [];
+    const hashes: bigint[] = [];
+    let pending: Buffer = Buffer.alloc(0);
     let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    let frameLimitExceeded = false;
+
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (err) reject(err);
+      else resolve({ hashes, intervalSeconds });
+    };
+
+    const killWith = (reason: "timeout" | "frame-limit") => {
+      if (reason === "timeout") timedOut = true;
+      else frameLimitExceeded = true;
+      proc.kill("SIGKILL");
+    };
+
+    const timer = timeoutMs
+      ? setTimeout(() => {
+          killWith("timeout");
+        }, timeoutMs)
+      : undefined;
 
     proc.stdout.on("data", (d: Buffer) => {
-      chunks.push(d);
+      pending = pending.length === 0 ? d : Buffer.concat([pending, d]);
+      while (pending.length >= FRAME_BYTES) {
+        const frame = pending.subarray(0, FRAME_BYTES);
+        hashes.push(dhash(frame));
+        pending = pending.subarray(FRAME_BYTES);
+        if (maxFrames !== undefined && hashes.length > maxFrames) {
+          killWith("frame-limit");
+          return;
+        }
+      }
     });
     proc.stderr.on("data", (d) => {
       stderr += d.toString();
+      if (stderr.length > 4000) stderr = stderr.slice(-4000);
     });
-    proc.on("error", reject);
+    proc.on("error", finish);
     proc.on("close", (code) => {
-      if (code !== 0) {
-        const tail = stderr.length > 1000 ? `…${stderr.slice(-1000)}` : stderr;
-        reject(new Error(`ffmpeg fingerprint exited ${code}\nstderr: ${tail}`));
+      if (timedOut) {
+        finish(new Error(`ffmpeg fingerprint timed out after ${timeoutMs}ms`));
         return;
       }
-      const all = Buffer.concat(chunks);
-      const numFrames = Math.floor(all.length / FRAME_BYTES);
-      const hashes: bigint[] = [];
-      for (let i = 0; i < numFrames; i++) {
-        const frame = all.subarray(i * FRAME_BYTES, (i + 1) * FRAME_BYTES);
-        hashes.push(dhash(frame));
+      if (frameLimitExceeded) {
+        finish(new Error(`ffmpeg fingerprint exceeded frame limit (${maxFrames})`));
+        return;
       }
-      resolve({ hashes, intervalSeconds });
+      if (code !== 0) {
+        const tail = stderr.length > 1000 ? `…${stderr.slice(-1000)}` : stderr;
+        finish(new Error(`ffmpeg fingerprint exited ${code}\nstderr: ${tail}`));
+        return;
+      }
+      finish();
     });
   });
 }
