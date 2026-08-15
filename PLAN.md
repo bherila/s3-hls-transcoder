@@ -108,11 +108,9 @@ For each cron invocation:
    2. **Mapping cache check**: if `mappings/<source-path>.json` exists with matching ETag+size, **skip** (already processed, fast path).
    3. **Stream source once**, computing in parallel: SHA-256 of bytes, MPEG-7 video signature.
    4. **Byte-hash dedup**: if `by-id/sha256:<hash>/master.m3u8` exists, write mapping pointing at it. Done.
-   5. **Perceptual dedup**: load fingerprint index, compare against existing signatures within `PERCEPTUAL_THRESHOLD`:
+   5. **Perceptual match**: load fingerprint index, compare against existing signatures within `PERCEPTUAL_THRESHOLD`:
       - No match → step 6.
-      - Match found → compare quality (resolution, then bitrate) of incoming vs. stored:
-        - Incoming ≤ stored → write mapping pointing at existing entry, no transcode.
-        - Incoming > stored → re-transcode from incoming, repoint all mappings referencing the matched entry, GC old transcoded output.
+      - Match found → log the candidate and quality comparison, but do not reuse, repoint, or delete existing content.
    6. **Acquire per-video lease** at `by-id/<id>/.processing`.
    7. **Transcode** to ABR ladder via ffmpeg. Output fMP4 segments + per-resolution playlists + master playlist.
    8. **Write** `metadata.json` + fingerprint file + mapping file. **Release per-video lease.**
@@ -208,31 +206,31 @@ Each pair JSON object:
 
 **Overlap validation:** startup refuses to run if any source bucket overlaps with any destination bucket. Two buckets overlap when they share endpoint + bucket name AND one's prefix is a prefix of the other (including the empty prefix). Different endpoints with the same bucket name are _not_ overlap. Source-vs-source and dest-vs-dest are intentionally allowed.
 
-| Var                        | Required | Default          | Description                                                            |
-| -------------------------- | :------: | ---------------- | ---------------------------------------------------------------------- |
-| `BUCKETS_CONFIG_FILE`      |    no    | —                | Path to JSON file containing pair array                                |
-| `BUCKETS_CONFIG`           |    no    | —                | JSON literal containing pair array                                     |
-| `SOURCE_BUCKET`            |    †     | —                | Source bucket name (single-pair fallback)                              |
-| `SOURCE_ENDPOINT`          |    †     | —                | S3 endpoint URL (R2: `https://<account>.r2.cloudflarestorage.com`)     |
-| `SOURCE_ACCESS_KEY_ID`     |    †     | —                | Also acts as env-level fallback in BUCKETS_CONFIG                      |
-| `SOURCE_SECRET_ACCESS_KEY` |    †     | —                | Also env-level fallback                                                |
-| `SOURCE_REGION`            |    no    | `auto`           |                                                                        |
-| `SOURCE_PREFIX`            |    no    | ``               | Limit scan to this prefix (single-pair fallback only)                  |
-| `DEST_BUCKET`              |    †     | —                |                                                                        |
-| `DEST_ENDPOINT`            |    †     | —                |                                                                        |
-| `DEST_ACCESS_KEY_ID`       |    †     | —                | Env-level fallback                                                     |
-| `DEST_SECRET_ACCESS_KEY`   |    †     | —                | Env-level fallback                                                     |
-| `DEST_REGION`              |    no    | `auto`           |                                                                        |
-| `HLS_LADDER`               |    no    | (built-in)       | JSON array overriding ABR ladder                                       |
-| `MAX_RUNTIME_SECONDS`      |    no    | platform default | Self-imposed runtime budget ceiling                                    |
-| `LOCK_TTL_MULTIPLIER`      |    no    | `1.5`            | Lock TTL = `MAX_RUNTIME × this`                                        |
-| `BUDGET_MULTIPLIER`        |    no    | `0.75`           | Budget = `MAX_RUNTIME × this`                                          |
-| `PERCEPTUAL_THRESHOLD`     |    no    | `0.95`           | Similarity score required for dedup match                              |
-| `PERCEPTUAL_DRY_RUN`       |    no    | `false`          | If `true`, log would-be merges instead of acting                       |
-| `CLEANUP_DELETED_SOURCES`  |    no    | `false`          | If `true`, run a refcount-aware orphan-mapping GC pass each invocation |
-| `CLEANUP_DRY_RUN`          |    no    | `false`          | If `true`, cleanup pass logs without deleting                          |
-| `MAX_CONCURRENCY`          |    no    | `1`              | Source files processed in parallel within one run                      |
-| `LOG_LEVEL`                |    no    | `info`           | `debug` / `info` / `warn` / `error`                                    |
+| Var                        | Required | Default          | Description                                                               |
+| -------------------------- | :------: | ---------------- | ------------------------------------------------------------------------- |
+| `BUCKETS_CONFIG_FILE`      |    no    | —                | Path to JSON file containing pair array                                   |
+| `BUCKETS_CONFIG`           |    no    | —                | JSON literal containing pair array                                        |
+| `SOURCE_BUCKET`            |    †     | —                | Source bucket name (single-pair fallback)                                 |
+| `SOURCE_ENDPOINT`          |    †     | —                | S3 endpoint URL (R2: `https://<account>.r2.cloudflarestorage.com`)        |
+| `SOURCE_ACCESS_KEY_ID`     |    †     | —                | Also acts as env-level fallback in BUCKETS_CONFIG                         |
+| `SOURCE_SECRET_ACCESS_KEY` |    †     | —                | Also env-level fallback                                                   |
+| `SOURCE_REGION`            |    no    | `auto`           |                                                                           |
+| `SOURCE_PREFIX`            |    no    | ``               | Limit scan to this prefix (single-pair fallback only)                     |
+| `DEST_BUCKET`              |    †     | —                |                                                                           |
+| `DEST_ENDPOINT`            |    †     | —                |                                                                           |
+| `DEST_ACCESS_KEY_ID`       |    †     | —                | Env-level fallback                                                        |
+| `DEST_SECRET_ACCESS_KEY`   |    †     | —                | Env-level fallback                                                        |
+| `DEST_REGION`              |    no    | `auto`           |                                                                           |
+| `HLS_LADDER`               |    no    | (built-in)       | JSON array overriding ABR ladder                                          |
+| `MAX_RUNTIME_SECONDS`      |    no    | platform default | Self-imposed runtime budget ceiling                                       |
+| `LOCK_TTL_MULTIPLIER`      |    no    | `1.5`            | Lock TTL = `MAX_RUNTIME × this`                                           |
+| `BUDGET_MULTIPLIER`        |    no    | `0.75`           | Budget = `MAX_RUNTIME × this`                                             |
+| `PERCEPTUAL_THRESHOLD`     |    no    | `0.95`           | Similarity score required to log an advisory perceptual match             |
+| `PERCEPTUAL_DRY_RUN`       |    no    | `false`          | Retained for compatibility; perceptual matches are always non-destructive |
+| `CLEANUP_DELETED_SOURCES`  |    no    | `false`          | If `true`, run a refcount-aware orphan-mapping GC pass each invocation    |
+| `CLEANUP_DRY_RUN`          |    no    | `false`          | If `true`, cleanup pass logs without deleting                             |
+| `MAX_CONCURRENCY`          |    no    | `1`              | Source files processed in parallel within one run                         |
+| `LOG_LEVEL`                |    no    | `info`           | `debug` / `info` / `warn` / `error`                                       |
 
 † Required when neither `BUCKETS_CONFIG_FILE` nor `BUCKETS_CONFIG` is set.
 

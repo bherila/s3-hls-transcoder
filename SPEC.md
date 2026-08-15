@@ -101,20 +101,14 @@ Strict sequence. Steps numbered for cross-reference; side effects called out exp
       6. **Compute effective ladder.** Filter the configured ladder to rungs at or below source resolution. No upscaling.
       7. **Fingerprint** the source via dHash on keyframes sampled at `fps=1/2`, 9×8 grayscale.
       8. **Perceptual match search.** Read `<dest>/fingerprints/index.json` and compare against entries with comparable frame count (within 0.7 ratio prefilter). Similarity = 1 − meanHammingDist / 64.
-         - Best similarity ≥ `PERCEPTUAL_THRESHOLD` (default 0.95):
-           - Incoming resolution ≤ matched stored resolution → write mapping pointing at matched contentId; skip transcode (counted as `deduped`).
-           - Incoming resolution > matched stored resolution → mark `pendingRepointFrom = matchedContentId`, continue to transcode the higher-quality version.
+         - Best similarity ≥ `PERCEPTUAL_THRESHOLD` (default 0.95): log the candidate match, its quality comparison, and `actedUpon: false`; continue without reusing, repointing, or deleting the matched content.
          - No match → continue.
       9. **Transcode** to HLS using ffmpeg with the effective ladder. Output: per-rung `index.m3u8` + `seg_*.m4s` + `init.mp4`, plus `master.m3u8` referencing all rungs.
       10. **Upload HLS output.** All segments + playlists uploaded under `by-id/<contentId>/`.
       11. **Upload fingerprint** (`fingerprints/<contentId>.bin`) and **upsert** into `fingerprints/index.json`.
       12. **Write metadata.json** (probe results + ladder used + encoder version) and **write mapping** for this source key.
-      13. **Repoint, if applicable.** If step 8 set `pendingRepointFrom`:
-          - List all mapping keys whose JSON references the old contentId (linear scan over `mappings/`).
-          - Rewrite each to point at the new contentId.
-          - Delete the old `by-id/<oldId>/` tree, the old `fingerprints/<oldId>.bin`, and remove the old index entry.
-      14. **Release per-video lease** (DELETE `.processing`).
-      15. Increment `processed` counter.
+      13. **Release per-video lease** (DELETE `.processing`).
+      14. Increment `processed` counter.
    3. **Cleanup pass** (only if `CLEANUP_DELETED_SOURCES=true`): see §6.
    4. **Release global lock** (DELETE `.transcoder.lock`).
 
@@ -136,14 +130,14 @@ Before each iteration of step 2.2, the worker checks elapsed time against `BUDGE
 
 Two layers, applied in order:
 
-| Layer          | Trigger                                                                   | Cost                            | Action                                                                                           |
-| -------------- | ------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------ |
-| **Byte-hash**  | SHA-256 of source bytes matches an existing `by-id/sha256:<hash>/` entry  | Always computed during download | Write mapping pointing at existing entry. No transcode.                                          |
-| **Perceptual** | dHash similarity ≥ `PERCEPTUAL_THRESHOLD` against an existing fingerprint | One ffmpeg pass per new video   | Quality-aware: equal/lower → reuse; higher → re-encode the new version and repoint old mappings. |
+| Layer          | Trigger                                                                   | Cost                            | Action                                                                                                 |
+| -------------- | ------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Byte-hash**  | SHA-256 of source bytes matches an existing `by-id/sha256:<hash>/` entry  | Always computed during download | Write mapping pointing at existing entry. No transcode.                                                |
+| **Perceptual** | dHash similarity ≥ `PERCEPTUAL_THRESHOLD` against an existing fingerprint | One ffmpeg pass per new video   | Advisory only: log candidate matches and quality comparison; do not reuse, repoint, or delete content. |
 
-Repoint-on-quality-upgrade (step 4.13) is what makes perceptual dedup safe: a higher-resolution duplicate _replaces_ the stored output and all mappings that previously pointed at the old version are atomically (per-mapping) rewritten before the old `by-id/` is GC'd.
+Perceptual matching is intentionally advisory because fingerprints do not prove tenant, owner, source-prefix, ACL, or exact-byte equivalence. A match must not cause mappings to be reused/repointed or existing outputs to be garbage-collected without an ownership-aware authorization design.
 
-`PERCEPTUAL_DRY_RUN=true` causes step 8 to log would-be matches without acting.
+`PERCEPTUAL_DRY_RUN=true` is retained as a configuration flag, but perceptual matches are always non-destructive.
 
 ---
 
@@ -229,7 +223,6 @@ A bucket with no resolved credentials at any level fails startup.
 - **Content ID is deterministic** in source bytes: identical bytes → identical `sha256:<hex>` → same `by-id/` path.
 - **Re-running over an unchanged source bucket is a no-op** beyond cache-check GETs (every key hits the mapping cache, step 4.2.2.1).
 - **Rerunning a partially-complete prior run** is safe: in-flight per-video leases are respected; stale leases expire and are reclaimed; uploaded segments past a crash are overwritten on retry.
-- **Mapping rewrites during repoint are not transactional across mappings** — a crash mid-repoint can leave a mix of old and new pointers. The next run's perceptual-match step detects the inconsistency and re-runs the repoint.
 
 ---
 

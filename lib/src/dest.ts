@@ -26,9 +26,9 @@ export async function transcodedOutputExists(
 }
 
 /**
- * Removes everything under `by-id/<contentId>/`. Used when a higher-quality
- * source supersedes existing transcoded output. Returns the number of
- * objects deleted.
+ * Removes everything under `by-id/<contentId>/`. Used by refcount-aware
+ * cleanup when no mappings still reference the content ID. Returns the number
+ * of objects deleted.
  */
 export async function deleteByIdDirectory(
   client: S3Client,

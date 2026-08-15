@@ -77,9 +77,8 @@ export function isCachedMapping(
 }
 
 /**
- * Returns source keys whose mapping currently points at `contentId`. Used
- * before a perceptual repoint so we know which mappings to update when we
- * replace stored output with a higher-quality version.
+ * Returns source keys whose mapping currently points at `contentId`. Used by
+ * cleanup to determine whether a content ID is still referenced.
  *
  * O(N) GETs over the mappings/ prefix. Acceptable while mapping count is
  * modest; a reverse-index file under by-id/<id>/refs.json would be the
