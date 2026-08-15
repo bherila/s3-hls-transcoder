@@ -216,13 +216,27 @@ function singlePairFromEnv(): BucketPair {
  * Refuses to run if any source bucket overlaps with any destination bucket.
  * Two buckets "overlap" when they share endpoint + bucket name AND one's
  * prefix is a prefix of the other (including empty prefix). Source vs.
- * source and dest vs. dest are intentionally allowed (multiple pairs may
- * legitimately share either side).
+ * source sharing is allowed, but destination buckets must be unique within
+ * a run because mappings are stored in a bucket-global namespace.
  */
 function validateNoOverlaps(pairs: BucketPair[]): void {
   if (pairs.length === 0) {
     throw new Error("At least one bucket pair must be configured");
   }
+  for (let i = 0; i < pairs.length; i++) {
+    for (let j = i + 1; j < pairs.length; j++) {
+      const a = pairs[i]!.dest;
+      const b = pairs[j]!.dest;
+      if (sameBucketLocation(a, b)) {
+        throw new Error(
+          `Configuration error: destination pairs[${i}] '${a.bucket}' at ${a.endpoint} ` +
+            `shares a bucket namespace with destination pairs[${j}] '${b.bucket}' at ` +
+            `${b.endpoint}. Destination buckets must be unique to avoid mapping collisions.`,
+        );
+      }
+    }
+  }
+
   for (let i = 0; i < pairs.length; i++) {
     for (let j = 0; j < pairs.length; j++) {
       const src = pairs[i]!.source;
@@ -240,11 +254,14 @@ function validateNoOverlaps(pairs: BucketPair[]): void {
 }
 
 export function bucketsOverlap(a: BucketConfig, b: BucketConfig): boolean {
-  if (normalizeEndpoint(a.endpoint) !== normalizeEndpoint(b.endpoint)) return false;
-  if (a.bucket !== b.bucket) return false;
+  if (!sameBucketLocation(a, b)) return false;
   const aPrefix = a.prefix ?? "";
   const bPrefix = b.prefix ?? "";
   return aPrefix.startsWith(bPrefix) || bPrefix.startsWith(aPrefix);
+}
+
+function sameBucketLocation(a: BucketConfig, b: BucketConfig): boolean {
+  return normalizeEndpoint(a.endpoint) === normalizeEndpoint(b.endpoint) && a.bucket === b.bucket;
 }
 
 function normalizeEndpoint(s: string): string {
