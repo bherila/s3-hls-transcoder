@@ -14,6 +14,8 @@ describe("mappingKey", () => {
 describe("isCachedMapping", () => {
   const base: SourceMapping = {
     sourceKey: "x.mp4",
+    sourceBucket: "source",
+    sourceEndpoint: "https://source.example.com",
     sourceEtag: "etag1",
     sourceSize: 100,
     sourceLastModified: "2026-04-25T00:00:00Z",

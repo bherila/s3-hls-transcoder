@@ -36,6 +36,8 @@ function notFound(): S3ServiceException {
 function makeMapping(sourceKey: string, contentId: string): SourceMapping {
   return {
     sourceKey,
+    sourceBucket: "source",
+    sourceEndpoint: "https://source.example.com",
     sourceEtag: "etag-" + sourceKey,
     sourceSize: 1024,
     sourceLastModified: "2026-01-01T00:00:00Z",
