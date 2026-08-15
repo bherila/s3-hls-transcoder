@@ -22,11 +22,15 @@ Set the env vars listed in [`local/.env.sample`](../local/.env.sample) on the La
 
 ## Build
 
-From the repo root:
+From the repo root, provide the SHA-256 digest for the ffmpeg static archive that matches your target architecture:
 
 ```sh
-docker build -f aws/Dockerfile -t s3-hls-transcoder-aws .
+docker build -f aws/Dockerfile \
+  --build-arg FFMPEG_SHA256_AMD64=<sha256-of-ffmpeg-release-amd64-static.tar.xz> \
+  -t s3-hls-transcoder-aws .
 ```
+
+For ARM64/Graviton builds, pass `FFMPEG_SHA256_ARM64` instead. The build intentionally fails if the checksum for the selected architecture is omitted or does not match the downloaded archive.
 
 ## Push to ECR
 
@@ -48,6 +52,7 @@ aws ecr get-login-password --region $AWS_REGION \
 #    function (Lambda doesn't multi-arch dispatch).
 docker buildx build -f aws/Dockerfile \
     --platform linux/arm64 \
+    --build-arg FFMPEG_SHA256_ARM64=<sha256-of-ffmpeg-release-arm64-static.tar.xz> \
     -t $IMAGE_URI \
     --push .
 ```

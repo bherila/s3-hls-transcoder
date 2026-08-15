@@ -32,14 +32,22 @@ RUN pnpm --filter @s3-hls-transcoder/aws deploy --prod /deploy
 # ----- Runtime stage ------------------------------------------------------
 FROM public.ecr.aws/lambda/nodejs:${NODE_VERSION}
 
-# Static ffmpeg + ffprobe. johnvansickle.com is the conventional source for
-# Lambda-friendly Linux static builds; pin a version here for reproducible
-# builds when this stabilizes.
+# Static ffmpeg + ffprobe. The archive checksum must be supplied by the
+# build invocation so production images never install an unverified moving
+# third-party binary.
 ARG TARGETARCH=amd64
+ARG FFMPEG_SHA256_AMD64
+ARG FFMPEG_SHA256_ARM64
 RUN set -eux \
  && dnf install -y --setopt=tsflags=nodocs tar xz \
- && case "${TARGETARCH}" in arm64) FFARCH=arm64 ;; *) FFARCH=amd64 ;; esac \
+ && case "${TARGETARCH}" in \
+      arm64) FFARCH=arm64; FFMPEG_SHA256="${FFMPEG_SHA256_ARM64}" ;; \
+      amd64) FFARCH=amd64; FFMPEG_SHA256="${FFMPEG_SHA256_AMD64}" ;; \
+      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && test -n "${FFMPEG_SHA256}" \
  && curl -fsSL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${FFARCH}-static.tar.xz" -o /tmp/ffmpeg.tar.xz \
+ && echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
  && mkdir -p /tmp/ff \
  && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ff \
  && cp /tmp/ff/ffmpeg-*-${FFARCH}-static/ffmpeg /usr/local/bin/ \
