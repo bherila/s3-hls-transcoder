@@ -43,6 +43,8 @@ jobs:
           file: Dockerfile.imagehasher
           platforms: linux/amd64
           push: true
+          build-args: |
+            THREATEXCHANGE_REF=07b82cb6e87b7e0ac7fc2a01d865df5db10ee1f2
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
