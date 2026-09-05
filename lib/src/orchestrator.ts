@@ -235,6 +235,7 @@ async function runPair(args: {
           sourceClient,
           destClient,
           sourceBucket: pair.source.bucket,
+          sourceEndpoint: pair.source.endpoint,
           destBucket: pair.dest.bucket,
           ...(pair.source.prefix ? { sourcePrefix: pair.source.prefix } : {}),
           logger,
@@ -305,7 +306,7 @@ async function processSource(args: {
     // 3. Byte-hash dedup.
     if (await transcodedOutputExists(destClient, pair.dest.bucket, contentId)) {
       logger.info("byte-hash dedup hit", { sourceKey: source.key, contentId });
-      await writeMapping(destClient, pair.dest.bucket, buildMapping(source, contentId));
+      await writeMapping(destClient, pair.dest.bucket, buildMapping(source, pair, contentId));
       return "deduped";
     }
 
@@ -381,7 +382,11 @@ async function processSource(args: {
         });
         if (!config.perceptualDryRun) {
           if (!incomingHigher) {
-            await writeMapping(destClient, pair.dest.bucket, buildMapping(source, match.contentId));
+            await writeMapping(
+              destClient,
+              pair.dest.bucket,
+              buildMapping(source, pair, match.contentId),
+            );
             return "deduped";
           }
           pendingRepointFrom = match.contentId;
@@ -441,7 +446,7 @@ async function processSource(args: {
       };
       if (probe.bitrateKbps !== undefined) metadata.source.bitrateKbps = probe.bitrateKbps;
       await writeMetadata(destClient, pair.dest.bucket, metadata);
-      await writeMapping(destClient, pair.dest.bucket, buildMapping(source, contentId));
+      await writeMapping(destClient, pair.dest.bucket, buildMapping(source, pair, contentId));
 
       logger.info("transcode complete", { sourceKey: source.key, contentId });
 
@@ -475,9 +480,11 @@ function ensureBudgetRemaining(budgetEndsAt: number, activity: string): void {
   remainingBudgetMs(budgetEndsAt, activity);
 }
 
-function buildMapping(source: SourceObject, contentId: string): SourceMapping {
+function buildMapping(source: SourceObject, pair: BucketPair, contentId: string): SourceMapping {
   return {
     sourceKey: source.key,
+    sourceBucket: pair.source.bucket,
+    sourceEndpoint: pair.source.endpoint,
     sourceEtag: source.etag,
     sourceSize: source.size,
     sourceLastModified: source.lastModified.toISOString(),
