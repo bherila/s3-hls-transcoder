@@ -1,5 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { bucketsOverlap, type BucketConfig } from "./config.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { bucketsOverlap, loadConfig, type BucketConfig } from "./config.js";
+
+const ORIGINAL_ENV = process.env;
+
+beforeEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+});
+
+afterEach(() => {
+  process.env = ORIGINAL_ENV;
+});
 
 const base: BucketConfig = {
   bucket: "videos",
@@ -51,5 +61,45 @@ describe("bucketsOverlap", () => {
     const a: BucketConfig = { ...base, endpoint: "https://r2.example.com/" };
     const b: BucketConfig = { ...base, endpoint: "https://r2.example.com" };
     expect(bucketsOverlap(a, b)).toBe(true);
+  });
+});
+
+describe("loadConfig destination validation", () => {
+  it("rejects multiple pairs that share the same destination bucket namespace", () => {
+    process.env.BUCKETS_CONFIG = JSON.stringify([
+      {
+        source: { bucket: "src-a", endpoint: "https://r2.example.com" },
+        dest: { bucket: "shared-dest", endpoint: "https://R2.Example.com/path" },
+        accessKeyId: "ak",
+        secretAccessKey: "sk",
+      },
+      {
+        source: { bucket: "src-b", endpoint: "https://r2.example.com" },
+        dest: { bucket: "shared-dest", endpoint: "https://r2.example.com" },
+        accessKeyId: "ak",
+        secretAccessKey: "sk",
+      },
+    ]);
+
+    expect(() => loadConfig("local")).toThrow(/Destination buckets must be unique/);
+  });
+
+  it("allows multiple pairs with different destination buckets", () => {
+    process.env.BUCKETS_CONFIG = JSON.stringify([
+      {
+        source: { bucket: "src-a", endpoint: "https://r2.example.com" },
+        dest: { bucket: "dest-a", endpoint: "https://r2.example.com" },
+        accessKeyId: "ak",
+        secretAccessKey: "sk",
+      },
+      {
+        source: { bucket: "src-b", endpoint: "https://r2.example.com" },
+        dest: { bucket: "dest-b", endpoint: "https://r2.example.com" },
+        accessKeyId: "ak",
+        secretAccessKey: "sk",
+      },
+    ]);
+
+    expect(loadConfig("local").pairs).toHaveLength(2);
   });
 });
