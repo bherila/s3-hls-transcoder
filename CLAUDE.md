@@ -40,7 +40,7 @@ Entrypoints depend on `lib` via `workspace:*` and call into it; they only contai
 
 ## Dedup
 
-Two layers in v1: (1) byte-hash of source bytes (SHA-256), (2) MPEG-7 video signature (via `ffmpeg -vf signature`) for perceptual matching. Audio fingerprinting was rejected because many sources are silent. On a perceptual match with higher-resolution incoming, we re-transcode and repoint mappings; lower-or-equal incoming reuses existing.
+Two layers in v1: (1) byte-hash of source bytes (SHA-256), (2) MPEG-7 video signature (via `ffmpeg -vf signature`) for advisory perceptual matching. Audio fingerprinting was rejected because many sources are silent. Perceptual matches are logged for review/tuning but are not used to reuse, repoint, or delete content unless a future ownership-aware design can prove the source is authorized to affect the matched content.
 
 ## ABR ladder
 

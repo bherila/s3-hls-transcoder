@@ -6,16 +6,14 @@ import path from "node:path";
 import type { BucketPair, Config, LadderRung } from "./config.js";
 import { runCleanupPass } from "./cleanup.js";
 import { byIdPrefix, formatContentId, masterPlaylistKey } from "./contentId.js";
-import { deleteByIdDirectory, transcodedOutputExists } from "./dest.js";
+import { transcodedOutputExists } from "./dest.js";
 import { downloadAndHash } from "./download.js";
 import type { ProbeResult } from "./ffmpeg/probe.js";
 import { probeSource } from "./ffmpeg/probe.js";
 import { transcodeToHls } from "./ffmpeg/transcode.js";
 import { fingerprintVideo, serializeFingerprint } from "./fingerprint.js";
 import {
-  deleteFingerprint,
   findPerceptualMatch,
-  removeIndexEntry,
   uploadFingerprint,
   upsertIndexEntry,
   type FingerprintIndexEntry,
@@ -23,13 +21,7 @@ import {
 import { acquireLease } from "./lease.js";
 import { acquireLock, computeBudgetSeconds, computeLockTtlSeconds } from "./lock.js";
 import type { Logger } from "./logger.js";
-import {
-  findMappingsForContentId,
-  isCachedMapping,
-  readMapping,
-  writeMapping,
-  type SourceMapping,
-} from "./mapping.js";
+import { isCachedMapping, readMapping, writeMapping, type SourceMapping } from "./mapping.js";
 import { writeMetadata, type OutputMetadata } from "./metadata.js";
 import { createS3Client } from "./s3.js";
 import { scanSource, type SourceObject, type ScanOptions } from "./scanner.js";
@@ -364,9 +356,7 @@ async function processSource(args: {
         fingerprint,
         config.perceptualThreshold,
       );
-      let pendingRepointFrom: string | null = null;
       if (match) {
-        const incomingHigher = isHigherQuality(probe, match.entry);
         logger.info("perceptual match", {
           sourceKey: source.key,
           matchedContentId: match.contentId,
@@ -377,20 +367,11 @@ async function processSource(args: {
             videoBitrateKbps: match.entry.videoBitrateKbps,
           },
           incoming: { width: probe.width, height: probe.height, bitrateKbps: probe.bitrateKbps },
-          incomingHigherQuality: incomingHigher,
+          incomingHigherQuality: isHigherQuality(probe, match.entry),
+          actedUpon: false,
+          reason: "perceptual matches are advisory unless source ownership can be proven",
           dryRun: config.perceptualDryRun,
         });
-        if (!config.perceptualDryRun) {
-          if (!incomingHigher) {
-            await writeMapping(
-              destClient,
-              pair.dest.bucket,
-              buildMapping(source, pair, match.contentId),
-            );
-            return "deduped";
-          }
-          pendingRepointFrom = match.contentId;
-        }
       }
 
       // 9. Transcode.
@@ -450,17 +431,6 @@ async function processSource(args: {
 
       logger.info("transcode complete", { sourceKey: source.key, contentId });
 
-      // 13. Repoint + GC if higher-quality replacement.
-      if (pendingRepointFrom) {
-        await repointAndGc({
-          destClient,
-          bucket: pair.dest.bucket,
-          oldContentId: pendingRepointFrom,
-          newContentId: contentId,
-          logger,
-        });
-      }
-
       return "transcoded";
     } finally {
       await lease.release();
@@ -513,42 +483,4 @@ function isHigherQuality(probe: ProbeResult, stored: FingerprintIndexEntry): boo
     return probe.bitrateKbps > stored.videoBitrateKbps;
   }
   return false;
-}
-
-async function repointAndGc(args: {
-  destClient: S3Client;
-  bucket: string;
-  oldContentId: string;
-  newContentId: string;
-  logger: Logger;
-}): Promise<void> {
-  const { destClient, bucket, oldContentId, newContentId, logger } = args;
-  const sourceKeys = await findMappingsForContentId(destClient, bucket, oldContentId);
-  logger.info("repointing mappings to new transcoded output", {
-    oldContentId,
-    newContentId,
-    mappingCount: sourceKeys.length,
-  });
-
-  for (const sourceKey of sourceKeys) {
-    const old = await readMapping(destClient, bucket, sourceKey);
-    if (!old) continue;
-    const updated: SourceMapping = {
-      ...old,
-      contentId: newContentId,
-      hlsRoot: masterPlaylistKey(newContentId),
-      encoderVersion: VERSION,
-    };
-    await writeMapping(destClient, bucket, updated);
-  }
-
-  logger.info("garbage-collecting superseded transcoded output", { oldContentId });
-  const deletedCount = await deleteByIdDirectory(destClient, bucket, oldContentId);
-  await deleteFingerprint(destClient, bucket, oldContentId);
-  await removeIndexEntry(destClient, bucket, oldContentId);
-  logger.info("perceptual upgrade complete", {
-    oldContentId,
-    newContentId,
-    deletedObjects: deletedCount,
-  });
 }

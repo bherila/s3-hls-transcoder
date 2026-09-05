@@ -255,25 +255,23 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 		return 0, err
 	}
 
-	// 9. Perceptual match.
+	// 9. Perceptual match (advisory only). Fingerprints do not prove that this
+	// source is authorized to affect the matched content, so a match is logged
+	// but never used to reuse, repoint, or delete existing output.
 	match, err := FindPerceptualMatch(ctx, a.destClient, dest, fp, a.cfg.PerceptualThreshold)
 	if err != nil {
 		return 0, err
 	}
-	var pendingRepointFrom string
 	if match != nil {
-		incomingHigher := isHigherQuality(probe, match.Entry)
-		a.logger.Info("perceptual match", Fields{"sourceKey": source.Key, "matchedContentId": match.ContentID, "similarity": match.Similarity, "incomingHigherQuality": incomingHigher, "dryRun": a.cfg.PerceptualDryRun})
-		if !a.cfg.PerceptualDryRun {
-			if !incomingHigher {
-				if err := WriteMapping(ctx, a.destClient, dest, buildMapping(source, a.pair, match.ContentID)); err != nil {
-					return 0, err
-				}
-				clearTombstone(ctx, a, source.Key)
-				return outcomeDeduped, nil
-			}
-			pendingRepointFrom = match.ContentID
-		}
+		a.logger.Info("perceptual match", Fields{
+			"sourceKey": source.Key, "matchedContentId": match.ContentID, "similarity": match.Similarity,
+			"stored":                Fields{"width": match.Entry.Width, "height": match.Entry.Height, "videoBitrateKbps": match.Entry.VideoBitrateKbps},
+			"incoming":              Fields{"width": probe.Width, "height": probe.Height, "bitrateKbps": probe.BitrateKbps},
+			"incomingHigherQuality": isHigherQuality(probe, match.Entry),
+			"actedUpon":             false,
+			"reason":                "perceptual matches are advisory unless source ownership can be proven",
+			"dryRun":                a.cfg.PerceptualDryRun,
+		})
 	}
 
 	// 10. Transcode.
@@ -306,13 +304,6 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 		return 0, err
 	}
 	a.logger.Info("transcode complete", Fields{"sourceKey": source.Key, "contentId": contentID})
-
-	// 14. Repoint + GC on quality upgrade.
-	if pendingRepointFrom != "" {
-		if err := repointAndGC(ctx, a, pendingRepointFrom, contentID); err != nil {
-			return 0, err
-		}
-	}
 
 	clearTombstone(ctx, a, source.Key)
 	return outcomeTranscoded, nil
@@ -376,37 +367,6 @@ func isHigherQuality(probe *ProbeResult, stored FingerprintIndexEntry) bool {
 		return *probe.BitrateKbps > *stored.VideoBitrateKbps
 	}
 	return false
-}
-
-func repointAndGC(ctx context.Context, a pairArgs, oldContentID, newContentID string) error {
-	dest := a.pair.Dest.Bucket
-	sourceKeys, err := FindMappingsForContentID(ctx, a.destClient, dest, oldContentID)
-	if err != nil {
-		return err
-	}
-	a.logger.Info("repointing mappings to new transcoded output", Fields{"oldContentId": oldContentID, "newContentId": newContentID, "mappingCount": len(sourceKeys)})
-	for _, sk := range sourceKeys {
-		old, err := ReadMapping(ctx, a.destClient, dest, sk)
-		if err != nil {
-			return err
-		}
-		if old == nil {
-			continue
-		}
-		old.ContentID = newContentID
-		old.HLSRoot = MasterPlaylistKey(newContentID)
-		old.EncoderVersion = Version
-		if err := WriteMapping(ctx, a.destClient, dest, *old); err != nil {
-			return err
-		}
-	}
-	if _, err := DeleteByIDDirectory(ctx, a.destClient, dest, oldContentID); err != nil {
-		return err
-	}
-	if err := DeleteFingerprint(ctx, a.destClient, dest, oldContentID); err != nil {
-		return err
-	}
-	return RemoveIndexEntry(ctx, a.destClient, dest, oldContentID)
 }
 
 func rungNames(ladder []LadderRung) []string {
