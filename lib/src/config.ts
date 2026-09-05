@@ -35,6 +35,8 @@ export interface Config {
   cleanupDeletedSources: boolean;
   cleanupDryRun: boolean;
   maxConcurrency: number;
+  maxSourceSizeBytes: number;
+  maxVideoDurationSeconds: number;
   logLevel: "debug" | "info" | "warn" | "error";
   platform: Platform;
 }
@@ -95,6 +97,16 @@ export function loadConfig(platform: Platform): Config {
     cleanupDeletedSources: process.env.CLEANUP_DELETED_SOURCES === "true",
     cleanupDryRun: process.env.CLEANUP_DRY_RUN === "true",
     maxConcurrency: parseNumber("MAX_CONCURRENCY", process.env.MAX_CONCURRENCY, 1),
+    maxSourceSizeBytes: parseNumber(
+      "MAX_SOURCE_SIZE_BYTES",
+      process.env.MAX_SOURCE_SIZE_BYTES,
+      10 * 1024 * 1024 * 1024,
+    ),
+    maxVideoDurationSeconds: parseNumber(
+      "MAX_VIDEO_DURATION_SECONDS",
+      process.env.MAX_VIDEO_DURATION_SECONDS,
+      6 * 60 * 60,
+    ),
     logLevel: parseLogLevel(process.env.LOG_LEVEL),
     platform,
   };

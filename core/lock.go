@@ -39,7 +39,20 @@ type LockHandle struct {
 // Release deletes the lock object. Best-effort: a failure is logged and the
 // lock is left to expire after its TTL.
 func (h *LockHandle) Release(ctx context.Context) {
-	if _, err := h.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(h.bucket), Key: aws.String(h.key)}); err != nil {
+	existing, etag, err := readLockWithETag(ctx, h.client, h.bucket, h.key)
+	if err != nil {
+		h.logger.Warn("failed to inspect lock before release; will expire after TTL", Fields{"key": h.key, "workerId": h.WorkerID, "error": err.Error()})
+		return
+	}
+	if existing == nil {
+		h.logger.Info("lock already released", Fields{"key": h.key, "workerId": h.WorkerID})
+		return
+	}
+	if existing.WorkerID != h.WorkerID {
+		h.logger.Warn("skipping release of lock owned by another worker", Fields{"key": h.key, "workerId": h.WorkerID, "heldBy": existing.WorkerID})
+		return
+	}
+	if _, err := h.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(h.bucket), Key: aws.String(h.key), IfMatch: etag}); err != nil {
 		h.logger.Warn("failed to release lock; will expire after TTL", Fields{"key": h.key, "workerId": h.WorkerID, "error": err.Error()})
 		return
 	}
@@ -75,7 +88,7 @@ func AcquireLock(ctx context.Context, opts AcquireOptions) (*LockHandle, error) 
 		return handle, nil
 	}
 
-	existing, err := readLock(ctx, opts.Client, opts.Bucket, key)
+	existing, etag, err := readLockWithETag(ctx, opts.Client, opts.Bucket, key)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +110,7 @@ func AcquireLock(ctx context.Context, opts AcquireOptions) (*LockHandle, error) 
 	opts.Logger.Warn("stale lock found; attempting takeover", Fields{
 		"key": key, "staleWorkerId": existing.WorkerID, "ageSeconds": math.Round(ageSeconds),
 	})
-	if _, err := opts.Client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(opts.Bucket), Key: aws.String(key)}); err != nil {
+	if _, err := opts.Client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(opts.Bucket), Key: aws.String(key), IfMatch: etag}); err != nil {
 		opts.Logger.Warn("failed to delete stale lock; will retry PUT anyway", Fields{"key": key, "error": err.Error()})
 	}
 	return tryPutLock(ctx, opts, key)
@@ -135,19 +148,24 @@ func tryPutLock(ctx context.Context, opts AcquireOptions, key string) (*LockHand
 }
 
 func readLock(ctx context.Context, client *s3.Client, bucket, key string) (*LockBody, error) {
+	body, _, err := readLockWithETag(ctx, client, bucket, key)
+	return body, err
+}
+
+func readLockWithETag(ctx context.Context, client *s3.Client, bucket, key string) (*LockBody, *string, error) {
 	out, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
 	if err != nil {
 		if IsNotFound(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	defer out.Body.Close()
 	var body LockBody
 	if err := json.NewDecoder(out.Body).Decode(&body); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &body, nil
+	return &body, out.ETag, nil
 }
 
 // LeaseKey is the per-video lease object key.
