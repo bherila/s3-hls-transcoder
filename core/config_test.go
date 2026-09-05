@@ -1,6 +1,9 @@
 package core
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBucketsOverlap(t *testing.T) {
 	base := BucketConfig{Bucket: "videos", Endpoint: "https://r2.example.com", AccessKeyID: "ak", SecretAccessKey: "sk", Region: "auto"}
@@ -29,5 +32,35 @@ func TestBucketsOverlap(t *testing.T) {
 		if got := BucketsOverlap(c.a, c.b); got != c.want {
 			t.Errorf("%s: BucketsOverlap = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestLoadConfigRejectsSharedDestinations(t *testing.T) {
+	t.Setenv("BUCKETS_CONFIG_FILE", "")
+	t.Setenv("BUCKETS_CONFIG", `[
+		{"source":{"bucket":"src-a","endpoint":"https://r2.example.com"},"dest":{"bucket":"shared-dest","endpoint":"https://R2.Example.com/path"},"accessKeyId":"ak","secretAccessKey":"sk"},
+		{"source":{"bucket":"src-b","endpoint":"https://r2.example.com"},"dest":{"bucket":"shared-dest","endpoint":"https://r2.example.com"},"accessKeyId":"ak","secretAccessKey":"sk"}
+	]`)
+	_, err := LoadConfig(PlatformLocal)
+	if err == nil {
+		t.Fatal("expected shared destination buckets to be rejected")
+	}
+	if !strings.Contains(err.Error(), "destination buckets must be unique") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigAllowsDistinctDestinations(t *testing.T) {
+	t.Setenv("BUCKETS_CONFIG_FILE", "")
+	t.Setenv("BUCKETS_CONFIG", `[
+		{"source":{"bucket":"src-a","endpoint":"https://r2.example.com"},"dest":{"bucket":"dest-a","endpoint":"https://r2.example.com"},"accessKeyId":"ak","secretAccessKey":"sk"},
+		{"source":{"bucket":"src-b","endpoint":"https://r2.example.com"},"dest":{"bucket":"dest-b","endpoint":"https://r2.example.com"},"accessKeyId":"ak","secretAccessKey":"sk"}
+	]`)
+	cfg, err := LoadConfig(PlatformLocal)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if len(cfg.Pairs) != 2 {
+		t.Errorf("pairs = %d, want 2", len(cfg.Pairs))
 	}
 }

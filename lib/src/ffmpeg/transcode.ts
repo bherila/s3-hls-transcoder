@@ -13,6 +13,7 @@ export interface TranscodeOptions {
   segmentSeconds?: number;
   /** GOP size = segmentSeconds × fps. Default: 48 (assumes ~24fps × 2s; fine for 30fps). */
   gopSize?: number;
+  timeoutMs?: number;
 }
 
 /**
@@ -35,7 +36,7 @@ export async function transcodeToHls(opts: TranscodeOptions): Promise<void> {
   }
 
   const args = buildHlsArgs(opts);
-  await runProcess(findFfmpeg(), args);
+  await runProcess(findFfmpeg(), args, { timeoutMs: opts.timeoutMs });
 }
 
 function buildHlsArgs(opts: TranscodeOptions): string[] {

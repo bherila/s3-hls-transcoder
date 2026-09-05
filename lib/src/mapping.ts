@@ -11,6 +11,8 @@ const MAPPING_SUFFIX = ".json";
 
 export interface SourceMapping {
   sourceKey: string;
+  sourceBucket: string;
+  sourceEndpoint: string;
   sourceEtag: string;
   sourceSize: number;
   sourceLastModified: string;

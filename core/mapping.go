@@ -15,7 +15,11 @@ const (
 
 // SourceMapping points a source key at its transcoded output (client contract).
 type SourceMapping struct {
-	SourceKey          string `json:"sourceKey"`
+	SourceKey string `json:"sourceKey"`
+	// SourceBucket/SourceEndpoint record which pair wrote the mapping so that
+	// cleanup never treats another pair's mapping as one of its own orphans.
+	SourceBucket       string `json:"sourceBucket"`
+	SourceEndpoint     string `json:"sourceEndpoint"`
 	SourceEtag         string `json:"sourceEtag"`
 	SourceSize         int64  `json:"sourceSize"`
 	SourceLastModified string `json:"sourceLastModified"`

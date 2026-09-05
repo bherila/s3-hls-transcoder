@@ -9,6 +9,10 @@ export interface DownloadResult {
   bytes: number;
 }
 
+export interface DownloadOptions {
+  maxBytes?: number;
+}
+
 /**
  * Streams an S3 object to disk, computing SHA-256 along the way. Saves a
  * second full read of the source for the byte-hash dedup check.
@@ -18,6 +22,7 @@ export async function downloadAndHash(
   bucket: string,
   key: string,
   localPath: string,
+  options: DownloadOptions = {},
 ): Promise<DownloadResult> {
   const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!res.Body) throw new Error(`Empty body for s3://${bucket}/${key}`);
@@ -29,8 +34,13 @@ export async function downloadAndHash(
   const teeAndHash = new Transform({
     transform(chunk, _enc, cb) {
       const buf: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const nextBytes = bytes + buf.length;
+      if (options.maxBytes !== undefined && nextBytes > options.maxBytes) {
+        cb(new Error(`Download exceeded max size (${options.maxBytes} bytes)`));
+        return;
+      }
       hash.update(buf);
-      bytes += buf.length;
+      bytes = nextBytes;
       cb(null, buf);
     },
   });

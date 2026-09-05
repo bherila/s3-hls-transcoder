@@ -12,6 +12,7 @@ export interface CleanupOptions {
   sourceClient: S3Client;
   destClient: S3Client;
   sourceBucket: string;
+  sourceEndpoint: string;
   destBucket: string;
   /** Restrict cleanup to mappings whose source key starts with this prefix. */
   sourcePrefix?: string;
@@ -37,12 +38,21 @@ export interface CleanupResult {
  * Run inside the per-pair lock, after the transcoding pass, so any newly
  * written mappings from this run already exist when we count refs.
  *
- * Restricts to mappings under `sourcePrefix` so that one pair's cleanup
- * cannot stomp on another pair's mappings if multiple pairs share a dest
- * bucket.
+ * Restricts to mappings tagged with this pair's source bucket and endpoint
+ * (plus `sourcePrefix`, if set) so that one pair's cleanup cannot stomp on
+ * another pair's mappings if multiple pairs share a dest bucket.
  */
 export async function runCleanupPass(opts: CleanupOptions): Promise<CleanupResult> {
-  const { sourceClient, destClient, sourceBucket, destBucket, sourcePrefix, logger, dryRun } = opts;
+  const {
+    sourceClient,
+    destClient,
+    sourceBucket,
+    sourceEndpoint,
+    destBucket,
+    sourcePrefix,
+    logger,
+    dryRun,
+  } = opts;
 
   logger.info("cleanup: enumerating live source keys", { sourceBucket });
   const liveSources = new Set<string>();
@@ -57,6 +67,8 @@ export async function runCleanupPass(opts: CleanupOptions): Promise<CleanupResul
   const orphans = await findOrphanMappings({
     destClient,
     destBucket,
+    sourceBucket,
+    sourceEndpoint,
     sourcePrefix,
     liveSources,
   });
@@ -139,10 +151,12 @@ export async function runCleanupPass(opts: CleanupOptions): Promise<CleanupResul
 async function findOrphanMappings(args: {
   destClient: S3Client;
   destBucket: string;
+  sourceBucket: string;
+  sourceEndpoint: string;
   sourcePrefix?: string;
   liveSources: Set<string>;
 }): Promise<{ sourceKey: string; contentId: string }[]> {
-  const { destClient, destBucket, sourcePrefix, liveSources } = args;
+  const { destClient, destBucket, sourceBucket, sourceEndpoint, sourcePrefix, liveSources } = args;
   const orphans: { sourceKey: string; contentId: string }[] = [];
   let token: string | undefined;
 
@@ -166,6 +180,9 @@ async function findOrphanMappings(args: {
 
       const mapping = await readMapping(destClient, destBucket, sourceKey);
       if (!mapping) continue;
+      if (mapping.sourceBucket !== sourceBucket || mapping.sourceEndpoint !== sourceEndpoint) {
+        continue;
+      }
       orphans.push({ sourceKey, contentId: mapping.contentId });
     }
 
