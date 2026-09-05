@@ -9,7 +9,8 @@ export default defineConfig({
     globalSetup: ["src/globalSetup.ts"],
     // Each test can take several minutes (transcode + upload).
     testTimeout: 300_000,
-    hookTimeout: 120_000,
+    // Setup hooks pull the MinIO image, create buckets, and transcode fixtures.
+    hookTimeout: 300_000,
     // Run serially – each test brings up its own container anyway, and
     // parallel containers multiply Docker resource usage for no benefit.
     pool: "forks",
