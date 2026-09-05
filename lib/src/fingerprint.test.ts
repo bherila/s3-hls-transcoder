@@ -1,9 +1,13 @@
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   deserializeFingerprint,
   fingerprintSimilarity,
   popcount64,
   serializeFingerprint,
+  fingerprintVideo,
   type VideoFingerprint,
 } from "./fingerprint.js";
 
@@ -68,5 +72,23 @@ describe("fingerprint serialization", () => {
     const decoded = deserializeFingerprint(serializeFingerprint(fp));
     expect(decoded.intervalSeconds).toBeCloseTo(1);
     expect(decoded.hashes).toEqual([]);
+  });
+});
+
+describe("fingerprintVideo limits", () => {
+  it("streams ffmpeg frames and rejects output beyond the configured frame limit", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "fingerprint-test-"));
+    const ffmpeg = path.join(dir, "ffmpeg.js");
+    await writeFile(ffmpeg, `#!/usr/bin/env node\nprocess.stdout.write(Buffer.alloc(72 * 3));\n`);
+    await chmod(ffmpeg, 0o755);
+    const oldPath = process.env.FFMPEG_PATH;
+    process.env.FFMPEG_PATH = ffmpeg;
+    try {
+      await expect(fingerprintVideo("input.mp4", { maxFrames: 2 })).rejects.toThrow(/frame limit/);
+    } finally {
+      if (oldPath === undefined) delete process.env.FFMPEG_PATH;
+      else process.env.FFMPEG_PATH = oldPath;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

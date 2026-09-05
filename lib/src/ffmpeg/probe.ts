@@ -24,16 +24,12 @@ interface FfprobeOutput {
   };
 }
 
-export async function probeSource(input: string): Promise<ProbeResult> {
-  const { stdout } = await runProcess(findFfprobe(), [
-    "-v",
-    "error",
-    "-print_format",
-    "json",
-    "-show_streams",
-    "-show_format",
-    input,
-  ]);
+export async function probeSource(input: string, timeoutMs?: number): Promise<ProbeResult> {
+  const { stdout } = await runProcess(
+    findFfprobe(),
+    ["-v", "error", "-print_format", "json", "-show_streams", "-show_format", input],
+    { timeoutMs },
+  );
 
   const data = JSON.parse(stdout) as FfprobeOutput;
 

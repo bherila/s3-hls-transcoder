@@ -209,6 +209,7 @@ async function runPair(args: {
           sourceClient,
           destClient,
           logger,
+          budgetEndsAt,
         });
         if (result === "transcoded") processed++;
         else if (result === "deduped") deduped++;
@@ -263,14 +264,21 @@ async function processSource(args: {
   sourceClient: S3Client;
   destClient: S3Client;
   logger: Logger;
+  budgetEndsAt: number;
 }): Promise<ProcessResult> {
-  const { source, pair, config, sourceClient, destClient, logger } = args;
+  const { source, pair, config, sourceClient, destClient, logger, budgetEndsAt } = args;
 
   // 1. Mapping cache check.
   const existing = await readMapping(destClient, pair.dest.bucket, source.key);
   if (isCachedMapping(existing, { etag: source.etag, size: source.size })) {
     logger.debug("mapping cache hit", { sourceKey: source.key });
     return "cached";
+  }
+
+  if (source.size > config.maxSourceSizeBytes) {
+    throw new Error(
+      `Source object exceeds max size (${source.size} > ${config.maxSourceSizeBytes} bytes)`,
+    );
   }
 
   const tempDir = await mkdtemp(path.join(tmpdir(), "transcoder-"));
@@ -284,6 +292,7 @@ async function processSource(args: {
       pair.source.bucket,
       source.key,
       localSource,
+      { maxBytes: config.maxSourceSizeBytes },
     );
     if (bytes !== source.size) {
       logger.warn("downloaded size differs from listing", {
@@ -318,7 +327,10 @@ async function processSource(args: {
 
     try {
       // 5. Probe.
-      const probe = await probeSource(localSource);
+      const probe = await probeSource(
+        localSource,
+        remainingBudgetMs(budgetEndsAt, "probing source"),
+      );
       logger.info("probed source", {
         sourceKey: source.key,
         width: probe.width,
@@ -327,12 +339,23 @@ async function processSource(args: {
         hasAudio: probe.hasAudio,
       });
 
+      if (probe.durationSeconds > config.maxVideoDurationSeconds) {
+        throw new Error(
+          `Source duration exceeds max (${probe.durationSeconds} > ${config.maxVideoDurationSeconds} seconds)`,
+        );
+      }
+      ensureBudgetRemaining(budgetEndsAt, "probing source");
+
       // 6. Effective ladder.
       const effectiveLadder = computeEffectiveLadder(config.ladder, probe.width, probe.height);
       logger.info("effective ladder", { rungs: effectiveLadder.map((r) => r.name) });
 
       // 7. Perceptual fingerprint.
-      const fingerprint = await fingerprintVideo(localSource);
+      const fingerprint = await fingerprintVideo(localSource, {
+        maxFrames: Math.ceil(config.maxVideoDurationSeconds / 2),
+        timeoutMs: remainingBudgetMs(budgetEndsAt, "fingerprinting source"),
+      });
+      ensureBudgetRemaining(budgetEndsAt, "fingerprinting source");
 
       // 8. Perceptual match.
       const match = await findPerceptualMatch(
@@ -378,7 +401,9 @@ async function processSource(args: {
         outputDir,
         ladder: effectiveLadder,
         hasAudio: probe.hasAudio,
+        timeoutMs: remainingBudgetMs(budgetEndsAt, "transcoding source"),
       });
+      ensureBudgetRemaining(budgetEndsAt, "transcoding source");
 
       // 10. Upload HLS tree.
       logger.info("uploading HLS tree", { contentId });
@@ -443,6 +468,16 @@ async function processSource(args: {
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+function remainingBudgetMs(budgetEndsAt: number, activity: string): number {
+  const remaining = budgetEndsAt - Date.now();
+  if (remaining <= 0) throw new Error(`Runtime budget exhausted before ${activity}`);
+  return remaining;
+}
+
+function ensureBudgetRemaining(budgetEndsAt: number, activity: string): void {
+  remainingBudgetMs(budgetEndsAt, activity);
 }
 
 function buildMapping(source: SourceObject, pair: BucketPair, contentId: string): SourceMapping {

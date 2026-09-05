@@ -24,14 +24,20 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 # --- C++ PDQ hasher --------------------------------------------------------
 # The upstream Makefile target is `pdq-photo-hasher` (g++ -std=c++11, links only
 # -lm -lpthread; image decoding is delegated to ImageMagick at runtime via CImg).
-# Pin THREATEXCHANGE_REF to a commit for reproducible builds when needed.
 FROM debian:bookworm-slim AS pdqbuild
-ARG THREATEXCHANGE_REF=main
+ARG THREATEXCHANGE_REF=07b82cb6e87b7e0ac7fc2a01d865df5db10ee1f2
 RUN apt-get update && apt-get install -y --no-install-recommends \
         g++ make git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN git clone --depth 1 --branch "${THREATEXCHANGE_REF}" \
-        https://github.com/facebook/ThreatExchange.git /src
+RUN case "${THREATEXCHANGE_REF}" in \
+        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; \
+        *) echo "THREATEXCHANGE_REF must be a full 40-character commit SHA" >&2; exit 1 ;; \
+    esac \
+    && git init /src \
+    && git -C /src remote add origin https://github.com/facebook/ThreatExchange.git \
+    && git -C /src fetch --depth 1 origin "${THREATEXCHANGE_REF}" \
+    && git -C /src checkout --detach FETCH_HEAD \
+    && test "$(git -C /src rev-parse HEAD)" = "${THREATEXCHANGE_REF}"
 WORKDIR /src/pdq/cpp
 RUN make pdq-photo-hasher
 
