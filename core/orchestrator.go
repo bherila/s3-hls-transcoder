@@ -218,7 +218,7 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	}
 	if exists {
 		a.logger.Info("byte-hash dedup hit", Fields{"sourceKey": source.Key, "contentId": contentID})
-		if err := WriteMapping(ctx, a.destClient, dest, buildMapping(source, a.pair, contentID)); err != nil {
+		if err := writeMappingWithRefs(ctx, a, buildMapping(source, a.pair, contentID), existing); err != nil {
 			return 0, err
 		}
 		clearTombstone(ctx, a, source.Key)
@@ -300,7 +300,7 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	if err := WriteMetadata(ctx, a.destClient, dest, md); err != nil {
 		return 0, err
 	}
-	if err := WriteMapping(ctx, a.destClient, dest, buildMapping(source, a.pair, contentID)); err != nil {
+	if err := writeMappingWithRefs(ctx, a, buildMapping(source, a.pair, contentID), existing); err != nil {
 		return 0, err
 	}
 	a.logger.Info("transcode complete", Fields{"sourceKey": source.Key, "contentId": contentID})
@@ -332,6 +332,32 @@ func clearTombstone(ctx context.Context, a pairArgs, sourceKey string) {
 	if err := DeleteTombstone(ctx, a.destClient, a.pair.Dest.Bucket, sourceKey); err != nil {
 		a.logger.Warn("failed to clear error tombstone", Fields{"sourceKey": sourceKey, "error": err.Error()})
 	}
+}
+
+// writeMappingWithRefs writes a mapping and keeps the reverse index in step.
+// The new reference is added before the mapping is written and a superseded one
+// dropped after, so the index only ever over-reports: a failure in between can
+// leave a stale entry (cleanup prunes it) but never lose a live one, which
+// would let cleanup GC content a mapping still points at.
+func writeMappingWithRefs(ctx context.Context, a pairArgs, m SourceMapping, previous *SourceMapping) error {
+	dest := a.pair.Dest.Bucket
+	if err := AddRef(ctx, a.destClient, dest, m.ContentID, m.SourceKey); err != nil {
+		return err
+	}
+	if err := WriteMapping(ctx, a.destClient, dest, m); err != nil {
+		return err
+	}
+	if previous != nil && previous.ContentID != "" && previous.ContentID != m.ContentID {
+		// The source bytes changed: this key no longer references the old
+		// content. Best-effort — the mapping is already written, so a failure
+		// here must not fail the source; the stale entry is pruned by cleanup.
+		if err := RemoveRef(ctx, a.destClient, dest, previous.ContentID, m.SourceKey); err != nil {
+			a.logger.Warn("failed to drop superseded reverse-index entry", Fields{
+				"sourceKey": m.SourceKey, "contentId": previous.ContentID, "error": err.Error(),
+			})
+		}
+	}
+	return nil
 }
 
 func buildMapping(source SourceObject, pair BucketPair, contentID string) SourceMapping {

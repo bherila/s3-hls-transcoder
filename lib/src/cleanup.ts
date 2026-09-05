@@ -2,7 +2,8 @@ import { DeleteObjectCommand, ListObjectsV2Command, type S3Client } from "@aws-s
 import { deleteByIdDirectory } from "./dest.js";
 import { deleteFingerprint, removeIndexEntry } from "./fingerprintIndex.js";
 import type { Logger } from "./logger.js";
-import { findMappingsForContentId, mappingKey, readMapping } from "./mapping.js";
+import { mappingKey, readMapping } from "./mapping.js";
+import { listRefs, writeRefs } from "./refs.js";
 import { scanSource } from "./scanner.js";
 
 const MAPPING_PREFIX = "mappings/";
@@ -99,9 +100,20 @@ export async function runCleanupPass(opts: CleanupOptions): Promise<CleanupResul
   let orphanMappingsDeleted = 0;
 
   for (const [contentId, orphanSourceKeys] of byContentId) {
-    const allMappings = await findMappingsForContentId(destClient, destBucket, contentId);
+    // The reverse index answers "who still points at this content?" in one GET;
+    // only content written before the index existed falls back to the full
+    // mappings/ scan (and is backfilled by listRefs).
+    const refs = await listRefs(destClient, destBucket, contentId, !dryRun);
     const orphanSet = new Set(orphanSourceKeys);
-    const liveCount = allMappings.filter((k) => !orphanSet.has(k)).length;
+    const liveKeys = await verifyLiveRefs({
+      destClient,
+      destBucket,
+      contentId,
+      refs,
+      orphanSet,
+      logger,
+    });
+    const liveCount = liveKeys.length;
 
     if (liveCount === 0) {
       logger.info("cleanup: contentId fully orphaned; gc-ing transcoded output", {
@@ -127,13 +139,19 @@ export async function runCleanupPass(opts: CleanupOptions): Promise<CleanupResul
 
     if (dryRun) {
       orphanMappingsDeleted += orphanSourceKeys.length;
-    } else {
-      for (const sourceKey of orphanSourceKeys) {
-        await destClient.send(
-          new DeleteObjectCommand({ Bucket: destBucket, Key: mappingKey(sourceKey) }),
-        );
-        orphanMappingsDeleted++;
-      }
+      continue;
+    }
+    for (const sourceKey of orphanSourceKeys) {
+      await destClient.send(
+        new DeleteObjectCommand({ Bucket: destBucket, Key: mappingKey(sourceKey) }),
+      );
+      orphanMappingsDeleted++;
+    }
+    // Retained content keeps its index; rewrite it without the references just
+    // deleted (and any that verification found stale). GC'd content took its
+    // index down with the rest of its by-id/ directory.
+    if (liveCount > 0 && liveKeys.length !== refs.length) {
+      await writeRefs(destClient, destBucket, contentId, liveKeys);
     }
   }
 
@@ -190,4 +208,35 @@ async function findOrphanMappings(args: {
   } while (token);
 
   return orphans;
+}
+
+/**
+ * Returns the reverse-index entries that still hold: a source key not in
+ * `orphanSet` whose mapping object exists and still points at `contentId`.
+ *
+ * The index is deliberately allowed to over-report (a reference is added before
+ * its mapping is written and removed after it is deleted), so every retention
+ * decision is confirmed against the named mapping — one GET per candidate,
+ * against the whole-bucket scan this replaces.
+ */
+async function verifyLiveRefs(args: {
+  destClient: S3Client;
+  destBucket: string;
+  contentId: string;
+  refs: readonly string[];
+  orphanSet: ReadonlySet<string>;
+  logger: Logger;
+}): Promise<string[]> {
+  const { destClient, destBucket, contentId, refs, orphanSet, logger } = args;
+  const live: string[] = [];
+  for (const sourceKey of refs) {
+    if (orphanSet.has(sourceKey)) continue;
+    const mapping = await readMapping(destClient, destBucket, sourceKey);
+    if (mapping?.contentId !== contentId) {
+      logger.debug("cleanup: pruning stale reverse-index entry", { contentId, sourceKey });
+      continue;
+    }
+    live.push(sourceKey);
+  }
+  return live;
 }

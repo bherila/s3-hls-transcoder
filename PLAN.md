@@ -70,6 +70,7 @@ videos_hls/
       720p/...
       1080p/...
       metadata.json
+      refs.json                     ← reverse index: source keys pointing here
       .processing                   ← per-video lease (deleted on success)
   mappings/
     <full-source-path>.json         ← preserves source dir structure
@@ -96,6 +97,30 @@ The `by-id/` directory + `<scheme>:<id>` content IDs leave room for future ident
 ```
 
 Client lookup: `GET <bucket>/mappings/<source-path>.json` → read `hlsRoot` → fetch `master.m3u8` → play.
+
+## Reverse index
+
+`mappings/` answers "what output does this source key have?". `by-id/<id>/refs.json` answers the reverse — "which source keys point at this content?" — which is what refcounted cleanup needs:
+
+```json
+{
+  "version": 1,
+  "contentId": "sha256:f7c3bcc0...",
+  "sourceKeys": ["marketing/intro-2024.mp4", "archive/intro-copy.mp4"],
+  "updatedAt": "2026-06-14T..."
+}
+```
+
+Without it, deciding whether one content ID is still referenced costs a GET of every mapping in the bucket. With it, it costs one GET.
+
+Maintenance rules, which keep the index safe to trust:
+
+- A reference is added **before** its mapping is written, and a superseded one removed **after**. The index therefore only ever over-reports; it can never miss a live reference, which is the direction that would let cleanup GC content still in use.
+- Cleanup confirms each remaining reference against the mapping it names (one GET per reference) and rewrites the index without the stale ones, so an interrupted run cannot pin content forever.
+- Content with no `refs.json` — written before the index existed, or with the index deleted out of band — falls back to the full `mappings/` scan once, and the result is backfilled.
+- `refs.json` lives inside `by-id/<id>/`, so GC-ing the content disposes of its index with it.
+
+Read-modify-write on `refs.json` is unsynchronized, which is safe because a destination bucket is written by exactly one runner at a time (global lock) and destination buckets must be unique per run.
 
 ## Transcoding pipeline
 

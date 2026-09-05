@@ -22,6 +22,7 @@ import { acquireLease } from "./lease.js";
 import { acquireLock, computeBudgetSeconds, computeLockTtlSeconds } from "./lock.js";
 import type { Logger } from "./logger.js";
 import { isCachedMapping, readMapping, writeMapping, type SourceMapping } from "./mapping.js";
+import { addRef, removeRef } from "./refs.js";
 import { writeMetadata, type OutputMetadata } from "./metadata.js";
 import { createS3Client } from "./s3.js";
 import { scanSource, type SourceObject, type ScanOptions } from "./scanner.js";
@@ -298,7 +299,13 @@ async function processSource(args: {
     // 3. Byte-hash dedup.
     if (await transcodedOutputExists(destClient, pair.dest.bucket, contentId)) {
       logger.info("byte-hash dedup hit", { sourceKey: source.key, contentId });
-      await writeMapping(destClient, pair.dest.bucket, buildMapping(source, pair, contentId));
+      await writeMappingWithRefs({
+        client: destClient,
+        bucket: pair.dest.bucket,
+        mapping: buildMapping(source, pair, contentId),
+        previous: existing,
+        logger,
+      });
       return "deduped";
     }
 
@@ -427,7 +434,13 @@ async function processSource(args: {
       };
       if (probe.bitrateKbps !== undefined) metadata.source.bitrateKbps = probe.bitrateKbps;
       await writeMetadata(destClient, pair.dest.bucket, metadata);
-      await writeMapping(destClient, pair.dest.bucket, buildMapping(source, pair, contentId));
+      await writeMappingWithRefs({
+        client: destClient,
+        bucket: pair.dest.bucket,
+        mapping: buildMapping(source, pair, contentId),
+        previous: existing,
+        logger,
+      });
 
       logger.info("transcode complete", { sourceKey: source.key, contentId });
 
@@ -437,6 +450,39 @@ async function processSource(args: {
     }
   } finally {
     await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Writes a mapping and keeps the reverse index in step. The new reference is
+ * added before the mapping is written and a superseded one dropped after, so
+ * the index only ever over-reports: a failure in between can leave a stale
+ * entry (cleanup prunes it) but never lose a live one, which would let cleanup
+ * GC content a mapping still points at.
+ */
+async function writeMappingWithRefs(args: {
+  client: S3Client;
+  bucket: string;
+  mapping: SourceMapping;
+  previous: SourceMapping | null;
+  logger: Logger;
+}): Promise<void> {
+  const { client, bucket, mapping, previous, logger } = args;
+  await addRef(client, bucket, mapping.contentId, mapping.sourceKey);
+  await writeMapping(client, bucket, mapping);
+  if (previous && previous.contentId && previous.contentId !== mapping.contentId) {
+    // The source bytes changed: this key no longer references the old content.
+    // Best-effort — the mapping is already written, so a failure here must not
+    // fail the source; the stale entry is pruned by cleanup.
+    try {
+      await removeRef(client, bucket, previous.contentId, mapping.sourceKey);
+    } catch (err) {
+      logger.warn("failed to drop superseded reverse-index entry", {
+        sourceKey: mapping.sourceKey,
+        contentId: previous.contentId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }
 
