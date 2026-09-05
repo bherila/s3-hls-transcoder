@@ -159,7 +159,7 @@ func runPair(ctx context.Context, a pairArgs) (pairResult, bool) {
 	if a.cfg.CleanupDeletedSources && time.Now().Before(a.budgetEndsAt) {
 		if _, err := RunCleanupPass(ctx, CleanupOptions{
 			SourceClient: a.sourceClient, DestClient: a.destClient,
-			SourceBucket: a.pair.Source.Bucket, DestBucket: a.pair.Dest.Bucket,
+			SourceBucket: a.pair.Source.Bucket, SourceEndpoint: a.pair.Source.Endpoint, DestBucket: a.pair.Dest.Bucket,
 			SourcePrefix: a.pair.Source.Prefix, Logger: a.logger, DryRun: a.cfg.CleanupDryRun,
 		}); err != nil {
 			a.logger.Error("cleanup pass failed", Fields{"pairIndex": a.pairIndex, "error": err.Error()})
@@ -218,7 +218,7 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	}
 	if exists {
 		a.logger.Info("byte-hash dedup hit", Fields{"sourceKey": source.Key, "contentId": contentID})
-		if err := WriteMapping(ctx, a.destClient, dest, buildMapping(source, contentID)); err != nil {
+		if err := WriteMapping(ctx, a.destClient, dest, buildMapping(source, a.pair, contentID)); err != nil {
 			return 0, err
 		}
 		clearTombstone(ctx, a, source.Key)
@@ -266,7 +266,7 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 		a.logger.Info("perceptual match", Fields{"sourceKey": source.Key, "matchedContentId": match.ContentID, "similarity": match.Similarity, "incomingHigherQuality": incomingHigher, "dryRun": a.cfg.PerceptualDryRun})
 		if !a.cfg.PerceptualDryRun {
 			if !incomingHigher {
-				if err := WriteMapping(ctx, a.destClient, dest, buildMapping(source, match.ContentID)); err != nil {
+				if err := WriteMapping(ctx, a.destClient, dest, buildMapping(source, a.pair, match.ContentID)); err != nil {
 					return 0, err
 				}
 				clearTombstone(ctx, a, source.Key)
@@ -302,7 +302,7 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	if err := WriteMetadata(ctx, a.destClient, dest, md); err != nil {
 		return 0, err
 	}
-	if err := WriteMapping(ctx, a.destClient, dest, buildMapping(source, contentID)); err != nil {
+	if err := WriteMapping(ctx, a.destClient, dest, buildMapping(source, a.pair, contentID)); err != nil {
 		return 0, err
 	}
 	a.logger.Info("transcode complete", Fields{"sourceKey": source.Key, "contentId": contentID})
@@ -343,9 +343,10 @@ func clearTombstone(ctx context.Context, a pairArgs, sourceKey string) {
 	}
 }
 
-func buildMapping(source SourceObject, contentID string) SourceMapping {
+func buildMapping(source SourceObject, pair BucketPair, contentID string) SourceMapping {
 	return SourceMapping{
-		SourceKey: source.Key, SourceEtag: source.ETag, SourceSize: source.Size,
+		SourceKey: source.Key, SourceBucket: pair.Source.Bucket, SourceEndpoint: pair.Source.Endpoint,
+		SourceEtag: source.ETag, SourceSize: source.Size,
 		SourceLastModified: source.LastModified.UTC().Format(time.RFC3339Nano),
 		ContentID:          contentID, HLSRoot: MasterPlaylistKey(contentID),
 		EncodedAt: nowISO(), EncoderVersion: Version,

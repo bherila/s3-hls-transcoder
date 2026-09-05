@@ -13,10 +13,13 @@ type CleanupOptions struct {
 	SourceClient *s3.Client
 	DestClient   *s3.Client
 	SourceBucket string
-	DestBucket   string
-	SourcePrefix string
-	Logger       *Logger
-	DryRun       bool
+	// SourceEndpoint identifies, together with SourceBucket, the pair whose
+	// mappings this pass may treat as orphans.
+	SourceEndpoint string
+	DestBucket     string
+	SourcePrefix   string
+	Logger         *Logger
+	DryRun         bool
 }
 
 // CleanupResult summarizes a cleanup pass.
@@ -36,6 +39,10 @@ type orphanMapping struct {
 // RunCleanupPass removes transcoded output for sources deleted from the source
 // bucket. Refcount-aware: a content ID's by-id/ tree is GC'd only when all
 // mappings pointing at it are orphans. Orphan mapping objects are always deleted.
+//
+// Only mappings tagged with this pair's source bucket and endpoint (plus
+// SourcePrefix, if set) are candidates, so one pair's cleanup cannot stomp on
+// another pair's mappings if multiple pairs share a dest bucket.
 func RunCleanupPass(ctx context.Context, opts CleanupOptions) (CleanupResult, error) {
 	opts.Logger.Info("cleanup: enumerating live source keys", Fields{"sourceBucket": opts.SourceBucket})
 	liveSources := map[string]bool{}
@@ -147,6 +154,9 @@ func findOrphanMappings(ctx context.Context, opts CleanupOptions, liveSources ma
 				return nil, err
 			}
 			if m == nil {
+				continue
+			}
+			if m.SourceBucket != opts.SourceBucket || m.SourceEndpoint != opts.SourceEndpoint {
 				continue
 			}
 			orphans = append(orphans, orphanMapping{sourceKey: sourceKey, contentID: m.ContentID})
