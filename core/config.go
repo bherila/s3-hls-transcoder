@@ -266,9 +266,22 @@ func requiredBucket(prefix string) (BucketConfig, error) {
 	return BucketConfig{Bucket: bucket, Endpoint: endpoint, AccessKeyID: ak, SecretAccessKey: sk, Region: region}, nil
 }
 
+// validateNoOverlaps refuses to run if any source bucket overlaps with any
+// destination bucket. Source-vs-source sharing is allowed, but destination
+// buckets must be unique within a run because mappings are stored in a
+// bucket-global namespace and would collide across pairs.
 func validateNoOverlaps(pairs []BucketPair) error {
 	if len(pairs) == 0 {
 		return fmt.Errorf("at least one bucket pair must be configured")
+	}
+	for i := range pairs {
+		for j := i + 1; j < len(pairs); j++ {
+			a, b := pairs[i].Dest, pairs[j].Dest
+			if sameBucketLocation(a, b) {
+				return fmt.Errorf("configuration error: destination pairs[%d] '%s' at %s shares a bucket namespace with destination pairs[%d] '%s' at %s; destination buckets must be unique to avoid mapping collisions",
+					i, a.Bucket, a.Endpoint, j, b.Bucket, b.Endpoint)
+			}
+		}
 	}
 	for i := range pairs {
 		for j := range pairs {
@@ -285,13 +298,14 @@ func validateNoOverlaps(pairs []BucketPair) error {
 // BucketsOverlap reports whether two buckets share endpoint + name and one
 // prefix is a prefix of the other (the empty prefix subsumes everything).
 func BucketsOverlap(a, b BucketConfig) bool {
-	if normalizeEndpoint(a.Endpoint) != normalizeEndpoint(b.Endpoint) {
-		return false
-	}
-	if a.Bucket != b.Bucket {
+	if !sameBucketLocation(a, b) {
 		return false
 	}
 	return strings.HasPrefix(a.Prefix, b.Prefix) || strings.HasPrefix(b.Prefix, a.Prefix)
+}
+
+func sameBucketLocation(a, b BucketConfig) bool {
+	return normalizeEndpoint(a.Endpoint) == normalizeEndpoint(b.Endpoint) && a.Bucket == b.Bucket
 }
 
 func normalizeEndpoint(s string) string {

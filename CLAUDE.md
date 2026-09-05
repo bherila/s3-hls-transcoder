@@ -23,7 +23,7 @@ Entrypoints depend on `lib` via `workspace:*` and call into it; they only contai
 ## Bucket conventions
 
 - Configuration supports **multiple source/destination pairs** in a single run; orchestrator processes them sequentially. Each pair has independent credentials with cascade: bucket-level → pair-level → env-level (`SOURCE_*` / `DEST_*`).
-- **Overlap is rejected at startup**: no source bucket may share endpoint + bucket-name with a dest bucket whose prefix overlaps. Source-vs-source and dest-vs-dest are allowed.
+- **Overlap is rejected at startup**: no source bucket may share endpoint + bucket-name with a dest bucket whose prefix overlaps. Source-vs-source is allowed, but destination buckets must be unique per run because mappings are bucket-global.
 - Source bucket: **read-only**. Never modify, delete, or move source files.
 - Destination layout (full tree in PLAN.md):
   - `by-id/<scheme>:<id>/` — content-addressed HLS output (v1 scheme is `sha256`)
