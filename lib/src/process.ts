@@ -5,6 +5,10 @@ export interface ProcessResult {
   stderr: string;
 }
 
+export interface RunProcessOptions extends SpawnOptions {
+  timeoutMs?: number;
+}
+
 /**
  * Runs a process to completion. Resolves on exit code 0; rejects with the
  * tail of stderr on any other exit. stdin is closed.
@@ -12,12 +16,20 @@ export interface ProcessResult {
 export async function runProcess(
   cmd: string,
   args: string[],
-  options: SpawnOptions = {},
+  options: RunProcessOptions = {},
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...options });
+    const { timeoutMs, ...spawnOptions } = options;
+    const proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...spawnOptions });
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    const timer = timeoutMs
+      ? setTimeout(() => {
+          timedOut = true;
+          proc.kill("SIGKILL");
+        }, timeoutMs)
+      : undefined;
     proc.stdout?.on("data", (d) => {
       stdout += d.toString();
     });
@@ -26,7 +38,10 @@ export async function runProcess(
     });
     proc.on("error", reject);
     proc.on("close", (code) => {
-      if (code === 0) {
+      if (timer) clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`${cmd} timed out after ${timeoutMs}ms`));
+      } else if (code === 0) {
         resolve({ stdout, stderr });
       } else {
         const tail = stderr.length > 2000 ? `…${stderr.slice(-2000)}` : stderr;
