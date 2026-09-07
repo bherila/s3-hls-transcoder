@@ -1,13 +1,16 @@
-// Command transcoder runs the HLS transcoder. It supports three trigger modes,
-// selected by environment (see core.Serve):
+// Command transcoder runs the HLS transcoder. Its trigger mode is selected by
+// environment (see core.Serve):
 //
-//   - one-shot (cron): no REDIS_URL and no POLL_FALLBACK_SECONDS — run a single
-//     pass and exit (non-zero if any source failed).
-//   - poll: POLL_FALLBACK_SECONDS set, no REDIS_URL — run a pass, sleep, repeat.
-//   - wake (recommended co-located with the app): REDIS_URL set — run a pass,
-//     then BLPOP TRANSCODE_QUEUE with POLL_FALLBACK_SECONDS as a safety-net
-//     timeout. The app LPUSHes on upload, so HLS appears within seconds, while
-//     the timeout still guarantees a periodic sweep.
+//   - one-shot (cron): no wake source and no POLL_FALLBACK_SECONDS — run a
+//     single pass and exit (non-zero if any source failed).
+//   - poll: POLL_FALLBACK_SECONDS set, no wake source — run a pass, sleep,
+//     repeat.
+//   - wake (recommended co-located with the app): REDIS_URL and/or
+//     WAKE_HTTP_ADDR set — run a pass, then wait for a wake request with
+//     POLL_FALLBACK_SECONDS as a safety-net timeout. The app LPUSHes
+//     TRANSCODE_QUEUE, or a bucket event notification POSTs /wake, so HLS
+//     appears within seconds while the timeout still guarantees a periodic
+//     sweep.
 package main
 
 import (
@@ -37,6 +40,8 @@ func main() {
 		Logger:          logger,
 		RedisURL:        os.Getenv("REDIS_URL"),
 		Queue:           getenv("TRANSCODE_QUEUE", "transcode:requests"),
+		WakeHTTPAddr:    os.Getenv("WAKE_HTTP_ADDR"),
+		WakeHTTPToken:   os.Getenv("WAKE_HTTP_TOKEN"),
 		FallbackSeconds: envInt("POLL_FALLBACK_SECONDS", 0),
 		Run: func(ctx context.Context) core.RunSummary {
 			return core.RunOnce(ctx, core.OrchestratorOptions{Config: cfg, Logger: logger})

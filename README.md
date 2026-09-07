@@ -14,7 +14,8 @@ Self-hosted video transcoder. Watches an S3-compatible source bucket and produce
 The Go core (`core/`) backs two entrypoints under `cmd/`, sharing the same
 configuration, dest-bucket locking, source scanning, per-source mapping cache,
 error tombstones, runtime budget, and trigger modes (cron one-shot / poll /
-Redis-wake — see `core.Serve`):
+wake on Redis or an HTTP endpoint — see `core.Serve` and
+[PLAN.md](./PLAN.md#trigger-modes)):
 
 - **`cmd/transcoder`** — video → HLS (shells out to ffmpeg). Writes
   `mappings/<key>.json` → content-addressed `by-id/<id>/`.
