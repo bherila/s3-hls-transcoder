@@ -4,6 +4,8 @@ This document describes **what the implemented system does** — the contract a 
 
 If something here disagrees with the code, the code wins and this doc is wrong — file it as a bug.
 
+Building an app on top of the destination bucket? [docs/INTEGRATION.md](./docs/INTEGRATION.md) is the short version of this document, written for the app side.
+
 ---
 
 ## 1. Inputs
@@ -12,7 +14,7 @@ If something here disagrees with the code, the code wins and this doc is wrong �
 
 The source bucket is **read-only**. The system performs `HEAD`, `GET`, and `LIST` operations against it; it never issues `PUT`, `DELETE`, or `COPY`.
 
-A source object is considered a video if its key has one of the following extensions (case-insensitive): `.mp4`, `.mov`, `.mkv`, `.webm`, `.avi`, `.m4v`, `.mpg`, `.mpeg`, `.ts`, `.flv`, `.wmv`. Non-video keys are silently skipped during scanning.
+A source object is considered a video if its key's basename has one of the following extensions (case-insensitive): `.mp4`, `.mov`, `.mkv`, `.webm`, `.avi`, `.m4v`, `.mpg`, `.mpeg`, `.wmv`, `.flv`, `.ogv`, `.3gp`, `.ts`, `.m2ts`. Non-video keys are silently skipped during scanning.
 
 If `SOURCE_PREFIX` (single-pair) or `source.prefix` (multi-pair) is set, only keys under that prefix are scanned.
 

@@ -71,6 +71,7 @@ For ongoing operation, see the per-platform deploy guides below.
 
 | Want to                                         | Go to                                          |
 | ----------------------------------------------- | ---------------------------------------------- |
+| Integrate an app that uploads videos            | [docs/INTEGRATION.md](./docs/INTEGRATION.md)   |
 | Understand the architecture                     | [PLAN.md](./PLAN.md)                           |
 | Read the behavioral specification               | [SPEC.md](./SPEC.md)                           |
 | See deferred features                           | [FUTURE.md](./FUTURE.md)                       |
