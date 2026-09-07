@@ -160,9 +160,12 @@ which clears the block automatically.
 That is a deployment property, not a contract. A cron-driven deployment
 processes new uploads on its next tick — commonly 15 minutes — plus transcode
 time. Deployments that need lower latency can run the worker long-lived with a
-wake source (`REDIS_URL`, with `POLL_FALLBACK_SECONDS` as a safety net), so a
-pass starts within seconds of an upload; see the trigger modes in the
-[repository README](../README.md#workers). Either way, plan the UI around a
+wake source, so a pass starts within seconds of an upload: either a Redis queue
+the app `LPUSH`es (`REDIS_URL`), or an HTTP endpoint the app or a bucket event
+notification `POST`s (`WAKE_HTTP_ADDR`), with `POLL_FALLBACK_SECONDS` as the
+safety net under both. A wake is only a hint about timing — the pass that
+follows is a full scan — so your app never has to guarantee delivery. See
+[trigger modes](../PLAN.md#trigger-modes). Either way, plan the UI around a
 "processing" state: an upload is never ready synchronously.
 
 ## 4. Deleting a video
