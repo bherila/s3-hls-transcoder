@@ -47,7 +47,15 @@ S3 error stubs use `S3ServiceException` directly — construct them with `name`,
 
 ## Integration tests
 
-Live in `integration/`. Uses Testcontainers to spin up a real MinIO instance; generates a 5-second fixture MP4 via ffmpeg; runs the full `runOnce()` pipeline and asserts outputs (master.m3u8, mapping file, lock released, second run returns cached, etc.).
+Live in `integration/`. Testcontainers starts a real MinIO; `ffmpeg` generates the fixtures; the full `runOnce()` pipeline runs against them and the assertions read the destination bucket back. Three suites:
+
+| Suite                         | Covers                                                                                   |
+| ----------------------------- | ---------------------------------------------------------------------------------------- |
+| `runOnce.integration.test.ts` | Output layout, mapping contract, lock release, ladder filtering, metadata, cached re-run |
+| `dedup.integration.test.ts`   | Byte-hash dedup, and that a perceptual match stays advisory                              |
+| `cleanup.integration.test.ts` | Refcounted GC: retention, orphan-mapping deletion, dry run, index cleanup                |
+
+See [integration/README.md](./integration/README.md) for the fixtures and the assertion list.
 
 **Requirements**: Docker daemon running, `ffmpeg` on PATH (or `FFMPEG_PATH` set).
 
@@ -55,7 +63,7 @@ Live in `integration/`. Uses Testcontainers to spin up a real MinIO instance; ge
 INTEGRATION=1 pnpm --filter @s3-hls-transcoder/integration test
 ```
 
-Not run by `pnpm test` — they are excluded from the standard recursive run because they need Docker and ffmpeg.
+Not run by `pnpm test` — without `INTEGRATION=1` the suites skip, so the standard recursive run stays usable on a machine without Docker.
 
 ## Adding new tests
 
@@ -66,11 +74,14 @@ Not run by `pnpm test` — they are excluded from the standard recursive run bec
 
 ## CI
 
-The CI job (`ci.yml`) runs:
+`ci.yml` runs three jobs on every pull request:
 
-1. `pnpm --filter @s3-hls-transcoder/lib build` — builds `lib/dist` so downstream `tsc --noEmit` can resolve types
-2. `pnpm typecheck` — all packages
-3. `pnpm build` — all packages
-4. `pnpm test` — all packages
+| Job           | Runs                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| `build`       | `gofmt`, `go vet`, `go build`, `go test ./... -race`                                                  |
+| `node`        | `pnpm format:check`, `pnpm lint`, `pnpm build`, `pnpm typecheck`, `pnpm test` (unit suites)           |
+| `integration` | Installs ffmpeg, builds `lib`, then `INTEGRATION=1 pnpm --filter @s3-hls-transcoder/integration test` |
 
-ffmpeg is not installed in the CI runner. Any test that requires the binary must be skipped or placed behind an integration gate.
+`node` builds before typechecking because the entrypoint and integration packages resolve `@s3-hls-transcoder/lib` through `lib/dist`.
+
+The `node` job has no ffmpeg: a unit test that needs the binary must be skipped or moved behind the integration gate. The `integration` job installs it, and gets MinIO from the runner's Docker daemon via Testcontainers.
