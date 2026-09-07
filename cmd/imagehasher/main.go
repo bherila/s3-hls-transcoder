@@ -7,12 +7,14 @@
 //
 // Trigger modes (selected by environment):
 //
-//   - one-shot (cron): no REDIS_URL and no POLL_FALLBACK_SECONDS — run a single
-//     pass and exit (non-zero if any source failed).
-//   - poll: POLL_FALLBACK_SECONDS set, no REDIS_URL — run a pass, sleep, repeat.
-//   - wake: REDIS_URL set — run a pass, then BLPOP PDQ_QUEUE with
-//     POLL_FALLBACK_SECONDS as a safety-net timeout, so a pushed request is
-//     hashed within seconds while the timeout still guarantees a periodic sweep.
+//   - one-shot (cron): no wake source and no POLL_FALLBACK_SECONDS — run a
+//     single pass and exit (non-zero if any source failed).
+//   - poll: POLL_FALLBACK_SECONDS set, no wake source — run a pass, sleep,
+//     repeat.
+//   - wake: REDIS_URL and/or WAKE_HTTP_ADDR set — run a pass, then wait for a
+//     wake request (an LPUSH on PDQ_QUEUE, or a POST to /wake) with
+//     POLL_FALLBACK_SECONDS as a safety-net timeout, so a new image is hashed
+//     within seconds while the timeout still guarantees a periodic sweep.
 //
 // Point SOURCE_* at the image bucket and DEST_* at the results bucket. The app
 // reads image-mappings/<source-key>.json and uses its pdqHash field.
@@ -44,6 +46,8 @@ func main() {
 		Logger:          logger,
 		RedisURL:        os.Getenv("REDIS_URL"),
 		Queue:           getenv("PDQ_QUEUE", "pdq:requests"),
+		WakeHTTPAddr:    os.Getenv("WAKE_HTTP_ADDR"),
+		WakeHTTPToken:   os.Getenv("WAKE_HTTP_TOKEN"),
 		FallbackSeconds: envInt("POLL_FALLBACK_SECONDS", 0),
 		Run: func(ctx context.Context) core.RunSummary {
 			return core.RunImagesOnce(ctx, core.OrchestratorOptions{Config: cfg, Logger: logger})

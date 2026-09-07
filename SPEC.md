@@ -240,7 +240,6 @@ See [FUTURE.md](./FUTURE.md). Notable explicit non-features:
 
 - DASH manifests (CMAF segments are DASH-compatible if added later).
 - HEVC / AV1 codecs.
-- Source-bucket event-driven triggering.
 - Per-job retry/resume across runs.
 - Web UI / status dashboard.
 - Auth on playback URLs.

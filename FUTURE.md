@@ -27,15 +27,6 @@ What's _still_ deferred: a defensive sweep that enumerates `by-id/*/` and remove
 
 Useful as a separate `gc` command. Default: dry-run that emits a report to `gc-candidates.json` for human review before destructive action.
 
-## Source-bucket event-driven triggering
-
-Currently cron-poll. For larger or faster-changing source buckets:
-
-- S3: bucket event notifications → SQS → Lambda
-- R2: object-created events → CF Queue → Container
-
-Same pipeline, just a different trigger. Worth doing when poll latency or list-bucket cost becomes a problem.
-
 ## Per-job retry / resume
 
 A 14-min Lambda transcode that fails at minute 13 currently restarts from scratch on the next run. Resumability:
