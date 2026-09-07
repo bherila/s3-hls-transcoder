@@ -218,7 +218,7 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	}
 	if exists {
 		a.logger.Info("byte-hash dedup hit", Fields{"sourceKey": source.Key, "contentId": contentID})
-		if err := writeMappingWithRefs(ctx, a, buildMapping(source, a.pair, contentID), existing); err != nil {
+		if err := writeMappingWithRefs(ctx, a, buildMapping(source, a.pair, contentID), existing, true); err != nil {
 			return 0, err
 		}
 		clearTombstone(ctx, a, source.Key)
@@ -300,7 +300,7 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	if err := WriteMetadata(ctx, a.destClient, dest, md); err != nil {
 		return 0, err
 	}
-	if err := writeMappingWithRefs(ctx, a, buildMapping(source, a.pair, contentID), existing); err != nil {
+	if err := writeMappingWithRefs(ctx, a, buildMapping(source, a.pair, contentID), existing, false); err != nil {
 		return 0, err
 	}
 	a.logger.Info("transcode complete", Fields{"sourceKey": source.Key, "contentId": contentID})
@@ -339,9 +339,12 @@ func clearTombstone(ctx context.Context, a pairArgs, sourceKey string) {
 // dropped after, so the index only ever over-reports: a failure in between can
 // leave a stale entry (cleanup prunes it) but never lose a live one, which
 // would let cleanup GC content a mapping still points at.
-func writeMappingWithRefs(ctx context.Context, a pairArgs, m SourceMapping, previous *SourceMapping) error {
+// contentPreexisting says whether the content was already in the bucket before
+// this write (a dedup hit), which is what decides whether a missing reverse
+// index has to be seeded from a scan — see AddRef.
+func writeMappingWithRefs(ctx context.Context, a pairArgs, m SourceMapping, previous *SourceMapping, contentPreexisting bool) error {
 	dest := a.pair.Dest.Bucket
-	if err := AddRef(ctx, a.destClient, dest, m.ContentID, m.SourceKey); err != nil {
+	if err := AddRef(ctx, a.destClient, dest, m.ContentID, m.SourceKey, contentPreexisting); err != nil {
 		return err
 	}
 	if err := WriteMapping(ctx, a.destClient, dest, m); err != nil {

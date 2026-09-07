@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -14,14 +15,14 @@ func TestAddRefCreatesAndAppends(t *testing.T) {
 	client := newCleanupS3Client(t, fake)
 	ctx := context.Background()
 
-	if err := AddRef(ctx, client, "dest", refsContentID, "a/one.mp4"); err != nil {
+	if err := AddRef(ctx, client, "dest", refsContentID, "a/one.mp4", false); err != nil {
 		t.Fatalf("AddRef: %v", err)
 	}
-	if err := AddRef(ctx, client, "dest", refsContentID, "a/two.mp4"); err != nil {
+	if err := AddRef(ctx, client, "dest", refsContentID, "a/two.mp4", false); err != nil {
 		t.Fatalf("AddRef: %v", err)
 	}
 	// Re-adding an existing reference must not duplicate it.
-	if err := AddRef(ctx, client, "dest", refsContentID, "a/one.mp4"); err != nil {
+	if err := AddRef(ctx, client, "dest", refsContentID, "a/one.mp4", false); err != nil {
 		t.Fatalf("AddRef: %v", err)
 	}
 
@@ -54,7 +55,7 @@ func TestRemoveRef(t *testing.T) {
 	}
 
 	for _, k := range []string{"a/one.mp4", "a/two.mp4"} {
-		if err := AddRef(ctx, client, "dest", refsContentID, k); err != nil {
+		if err := AddRef(ctx, client, "dest", refsContentID, k, false); err != nil {
 			t.Fatalf("AddRef: %v", err)
 		}
 	}
@@ -265,7 +266,7 @@ func TestAddRefSeedsFromExistingMappingsWhenIndexAbsent(t *testing.T) {
 	fake.put("dest", MappingKey("b/two.mp4"),
 		testMapping("b/two.mp4", "source-b", "https://source-b.example.com", contentID))
 
-	if err := AddRef(context.Background(), client, "dest", contentID, "a/one.mp4"); err != nil {
+	if err := AddRef(context.Background(), client, "dest", contentID, "a/one.mp4", true); err != nil {
 		t.Fatalf("AddRef: %v", err)
 	}
 
@@ -295,7 +296,7 @@ func TestCleanupRetainsContentReferencedByPreIndexMapping(t *testing.T) {
 	fake.put("dest", MasterPlaylistKey(contentID), map[string]string{"m3u8": "x"})
 
 	// Pair A rewrites its mapping, creating the index for the first time.
-	if err := AddRef(context.Background(), client, "dest", contentID, "a/one.mp4"); err != nil {
+	if err := AddRef(context.Background(), client, "dest", contentID, "a/one.mp4", true); err != nil {
 		t.Fatalf("AddRef: %v", err)
 	}
 
@@ -312,5 +313,72 @@ func TestCleanupRetainsContentReferencedByPreIndexMapping(t *testing.T) {
 	}
 	if !fake.has("dest", MappingKey("b/two.mp4")) {
 		t.Error("another pair's mapping was deleted")
+	}
+}
+
+// Content transcoded in this pass cannot be referenced by any mapping yet, so
+// creating its index must not scan the bucket — that would put the O(N) read
+// this index exists to avoid onto the ingest path of every new upload.
+func TestAddRefDoesNotScanForFreshContent(t *testing.T) {
+	fake := &cleanupS3Fake{}
+	client := newCleanupS3Client(t, fake)
+
+	const contentID = "sha256:fresh"
+	for _, k := range []string{"a/one.mp4", "a/two.mp4", "a/three.mp4"} {
+		fake.put("dest", MappingKey(k),
+			testMapping(k, "source-a", "https://source-a.example.com", "sha256:unrelated"))
+	}
+
+	if err := AddRef(context.Background(), client, "dest", contentID, "a/new.mp4", false); err != nil {
+		t.Fatalf("AddRef: %v", err)
+	}
+
+	for _, k := range []string{"a/one.mp4", "a/two.mp4", "a/three.mp4"} {
+		if n := fake.getCount("dest", MappingKey(k)); n != 0 {
+			t.Errorf("unrelated mapping %s was read %d times; the ingest path must not scan", k, n)
+		}
+	}
+	refs, err := ReadRefs(context.Background(), client, "dest", contentID)
+	if err != nil {
+		t.Fatalf("ReadRefs: %v", err)
+	}
+	if refs == nil || len(refs.SourceKeys) != 1 || refs.SourceKeys[0] != "a/new.mp4" {
+		t.Errorf("unexpected index: %+v", refs)
+	}
+}
+
+// The index no longer lives inside by-id/, so GC has to delete it explicitly or
+// it outlives the content it describes.
+func TestCleanupDeletesRefsWhenContentIsGCd(t *testing.T) {
+	fake := &cleanupS3Fake{}
+	client := newCleanupS3Client(t, fake)
+
+	const contentID = "sha256:gone"
+	fake.put("dest", MappingKey("a/deleted.mp4"),
+		testMapping("a/deleted.mp4", "source-a", "https://source-a.example.com", contentID))
+	fake.put("dest", MasterPlaylistKey(contentID), map[string]string{"m3u8": "x"})
+	if err := WriteRefs(context.Background(), client, "dest", contentID, []string{"a/deleted.mp4"}); err != nil {
+		t.Fatalf("WriteRefs: %v", err)
+	}
+
+	res, err := RunCleanupPass(context.Background(), cleanupOptsForPairA(client))
+	if err != nil {
+		t.Fatalf("RunCleanupPass: %v", err)
+	}
+	if res.ContentIDsGCd != 1 {
+		t.Fatalf("expected the content to be GC'd: %+v", res)
+	}
+	if fake.has("dest", RefsKey(contentID)) {
+		t.Error("reverse index outlived the content it describes")
+	}
+}
+
+// The index must not sit under by-id/: that prefix is served to players, and
+// the index names source keys belonging to every source that deduped onto the
+// content.
+func TestRefsKeyIsOutsidePublicContentPrefix(t *testing.T) {
+	key := RefsKey("sha256:abc")
+	if strings.HasPrefix(key, ByIDPrefix("sha256:abc")) {
+		t.Errorf("refs key %q is inside the player-facing by-id/ prefix", key)
 	}
 }

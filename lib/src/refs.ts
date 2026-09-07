@@ -1,14 +1,21 @@
-import { GetObjectCommand, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
-import { byIdPrefix } from "./contentId.js";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  type S3Client,
+} from "@aws-sdk/client-s3";
 import { findMappingsForContentId } from "./mapping.js";
 import { isNotFound } from "./s3.js";
 
-const REFS_OBJECT_NAME = "refs.json";
+const REFS_PREFIX = "refs/";
 
 /**
  * Reverse index for one content ID: the source keys whose mapping currently
- * points at it. Stored at `by-id/<contentId>/refs.json` so that GC-ing the
- * content directory disposes of the index with it.
+ * points at it. Stored at `refs/<contentId>.json`, alongside the other
+ * bookkeeping prefixes and deliberately outside `by-id/`: that prefix is served
+ * to players, and the index names source keys — which are private, and shared
+ * across every source that deduped onto the same content. Keeping it out also
+ * leaves `by-id/` genuinely immutable for caching.
  *
  * It exists so refcount decisions cost one GET per content ID instead of a full
  * `mappings/` scan (see {@link findMappingsForContentId}).
@@ -22,7 +29,24 @@ export interface ContentRefs {
 
 /** Dest-bucket key of a content ID's reverse index. */
 export function refsKey(contentId: string): string {
-  return `${byIdPrefix(contentId)}${REFS_OBJECT_NAME}`;
+  return `${REFS_PREFIX}${contentId}.json`;
+}
+
+/**
+ * Removes a content ID's reverse index. No-op if absent. Called by cleanup when
+ * the content is GC'd; the index no longer lives inside the `by-id/` tree, so
+ * it is not removed with it.
+ */
+export async function deleteRefs(
+  client: S3Client,
+  bucket: string,
+  contentId: string,
+): Promise<void> {
+  try {
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: refsKey(contentId) }));
+  } catch (err) {
+    if (!isNotFound(err)) throw err;
+  }
 }
 
 /** Returns a content ID's reverse index, or null if it has none. */
@@ -84,14 +108,20 @@ export async function addRef(
   bucket: string,
   contentId: string,
   sourceKey: string,
+  seedFromScan: boolean,
 ): Promise<void> {
   const refs = await readRefs(client, bucket, contentId);
   if (refs?.sourceKeys.includes(sourceKey)) return;
-  // No index yet: recover the existing references by scan before appending.
-  // Seeding it with only the incoming key would hide every mapping written
-  // before the index existed, and cleanup would then GC content those
-  // mappings still point at.
-  const existing = refs?.sourceKeys ?? (await findMappingsForContentId(client, bucket, contentId));
+  // `seedFromScan` says whether the content pre-dates this write (a dedup hit).
+  // If it does, recover its existing references first: seeding the index with
+  // only the incoming key would hide mappings written before the index existed
+  // and cleanup would then GC content they still point at. For content
+  // transcoded in this pass no mapping can reference it yet, and scanning would
+  // put an O(N) whole-bucket read on the ingest path — the cost this index
+  // exists to avoid.
+  const existing =
+    refs?.sourceKeys ??
+    (seedFromScan ? await findMappingsForContentId(client, bucket, contentId) : []);
   await writeRefs(client, bucket, contentId, [...existing, sourceKey]);
 }
 

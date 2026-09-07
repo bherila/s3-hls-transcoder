@@ -70,13 +70,14 @@ videos_hls/
       720p/...
       1080p/...
       metadata.json
-      refs.json                     ← reverse index: source keys pointing here
       .processing                   ← per-video lease (deleted on success)
   mappings/
     <full-source-path>.json         ← preserves source dir structure
   fingerprints/
     <id>.bin                        ← MPEG-7 video signatures
     index.json                      ← lookup index for similarity search
+  refs/
+    <id>.json                       ← reverse index: source keys pointing at <id>
 ```
 
 The `by-id/` directory + `<scheme>:<id>` content IDs leave room for future identifier types (e.g., `psig:` for stronger perceptual matches) without schema migration.
@@ -100,7 +101,7 @@ Client lookup: `GET <bucket>/mappings/<source-path>.json` → read `hlsRoot` →
 
 ## Reverse index
 
-`mappings/` answers "what output does this source key have?". `by-id/<id>/refs.json` answers the reverse — "which source keys point at this content?" — which is what refcounted cleanup needs:
+`mappings/` answers "what output does this source key have?". `refs/<id>.json` answers the reverse — "which source keys point at this content?" — which is what refcounted cleanup needs:
 
 ```json
 {
@@ -117,10 +118,10 @@ Maintenance rules, which keep the index safe to trust:
 
 - A reference is added **before** its mapping is written, and a superseded one removed **after**. The index therefore only ever over-reports; it can never miss a live reference, which is the direction that would let cleanup GC content still in use.
 - Cleanup confirms each remaining reference against the mapping it names (one GET per reference) and rewrites the index without the stale ones, so an interrupted run cannot pin content forever.
-- Content with no `refs.json` — written before the index existed, or with the index deleted out of band — falls back to the full `mappings/` scan once, and the result is backfilled.
-- `refs.json` lives inside `by-id/<id>/`, so GC-ing the content disposes of its index with it.
+- Content with no `refs/<id>.json` — written before the index existed, or with the index deleted out of band — falls back to the full `mappings/` scan once, and the result is backfilled.
+- `refs/<id>.json` lives outside `by-id/`, which is the prefix served to players: the index names source keys, which are private and span every source that deduped onto the content. Keeping it out also leaves `by-id/` genuinely immutable for caching. Cleanup deletes it explicitly when the content is GC'd.
 
-Read-modify-write on `refs.json` is unsynchronized, which is safe because a destination bucket is written by exactly one runner at a time (global lock) and destination buckets must be unique per run.
+Read-modify-write on `refs/<id>.json` is unsynchronized, which is safe because a destination bucket is written by exactly one runner at a time (global lock) and destination buckets must be unique per run.
 
 ## Transcoding pipeline
 

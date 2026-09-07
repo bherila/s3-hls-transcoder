@@ -24,7 +24,7 @@ export {
 
 // Reverse index (content ID → referencing source keys)
 export type { ContentRefs } from "./refs.js";
-export { refsKey, readRefs, writeRefs, addRef, removeRef, listRefs } from "./refs.js";
+export { refsKey, readRefs, writeRefs, addRef, removeRef, listRefs, deleteRefs } from "./refs.js";
 
 // Lock + lease
 export type { LockBody, LockHandle, AcquireOptions } from "./lock.js";
