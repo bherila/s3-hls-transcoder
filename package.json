@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Self-hosted HLS video transcoder for S3-compatible buckets",
   "scripts": {
+    "postinstall": "node scripts/spotlight-noindex.mjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
@@ -15,12 +16,13 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@eslint/js": "^9.0.0",
-    "eslint": "^9.0.0",
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
-    "prettier": "^3.3.0",
-    "typescript-eslint": "^8.0.0"
+    "prettier": "^3.9.6",
+    "spotlight-noindex": "1.1.1",
+    "typescript-eslint": "^8.70.0"
   },
   "packageManager": "pnpm@10.20.0",
   "engines": {
