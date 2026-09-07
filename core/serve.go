@@ -81,11 +81,16 @@ func Serve(ctx context.Context, opts ServeOptions) (RunSummary, error) {
 		go watchQueue(ctx, rdb, queue, time.Duration(fallback)*time.Second, wake, opts.Logger)
 	}
 
+	// A wake endpoint that dies after startup leaves the worker sweeping on the
+	// fallback timer only, silently losing the latency the operator configured
+	// it for. Surface it as a Serve error so the supervisor restarts.
+	var httpFailed <-chan error
 	if opts.WakeHTTPAddr != "" {
-		stop, err := serveWakeHTTP(ctx, opts, wake)
+		stop, failed, err := serveWakeHTTP(ctx, opts, wake)
 		if err != nil {
 			return RunSummary{}, err
 		}
+		httpFailed = failed
 		defer stop()
 	}
 
@@ -112,6 +117,8 @@ func Serve(ctx context.Context, opts ServeOptions) (RunSummary, error) {
 		timer.Reset(time.Duration(fallback) * time.Second)
 		select {
 		case <-ctx.Done():
+		case err := <-httpFailed:
+			return RunSummary{}, fmt.Errorf("wake HTTP server stopped: %w", err)
 		case <-wake:
 			opts.Logger.Debug("woke on request", nil)
 		case <-timer.C:
@@ -149,7 +156,9 @@ func watchQueue(ctx context.Context, rdb *redis.Client, queue string, timeout ti
 // consumer, or the uploading app itself — can shorten the wait for a new upload
 // without the worker needing a client for that source. Request bodies are
 // ignored: the pass that follows is a full scan.
-func serveWakeHTTP(ctx context.Context, opts ServeOptions, wake chan<- struct{}) (func(), error) {
+// The returned channel carries a post-startup server failure; Serve treats it
+// as fatal rather than running on with a dead endpoint.
+func serveWakeHTTP(ctx context.Context, opts ServeOptions, wake chan<- struct{}) (func(), <-chan error, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -178,21 +187,23 @@ func serveWakeHTTP(ctx context.Context, opts ServeOptions, wake chan<- struct{})
 	}
 	listener, err := newListener(ctx, opts.WakeHTTPAddr)
 	if err != nil {
-		return nil, fmt.Errorf("WAKE_HTTP_ADDR %q: %w", opts.WakeHTTPAddr, err)
+		return nil, nil, fmt.Errorf("wake HTTP address %q: %w", opts.WakeHTTPAddr, err)
 	}
 	if opts.WakeHTTPToken == "" {
 		opts.Logger.Warn("HTTP wake endpoint has no token; anyone who can reach it can trigger a pass", Fields{"addr": listener.Addr().String()})
 	}
+	failed := make(chan error, 1)
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			opts.Logger.Error("wake HTTP server stopped", Fields{"error": err.Error()})
+			failed <- err
 		}
 	}()
 	return func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
-	}, nil
+	}, failed, nil
 }
 
 // wakeTokenValid checks the shared secret, when one is configured, against

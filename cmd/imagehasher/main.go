@@ -11,8 +11,8 @@
 //     single pass and exit (non-zero if any source failed).
 //   - poll: POLL_FALLBACK_SECONDS set, no wake source — run a pass, sleep,
 //     repeat.
-//   - wake: REDIS_URL and/or WAKE_HTTP_ADDR set — run a pass, then wait for a
-//     wake request (an LPUSH on PDQ_QUEUE, or a POST to /wake) with
+//   - wake: REDIS_URL and/or IMAGEHASHER_WAKE_HTTP_ADDR set — run a pass, then
+//     wait for a wake request (an LPUSH on PDQ_QUEUE, or a POST to /wake) with
 //     POLL_FALLBACK_SECONDS as a safety-net timeout, so a new image is hashed
 //     within seconds while the timeout still guarantees a periodic sweep.
 //
@@ -46,7 +46,7 @@ func main() {
 		Logger:          logger,
 		RedisURL:        os.Getenv("REDIS_URL"),
 		Queue:           getenv("PDQ_QUEUE", "pdq:requests"),
-		WakeHTTPAddr:    os.Getenv("WAKE_HTTP_ADDR"),
+		WakeHTTPAddr:    getenv("IMAGEHASHER_WAKE_HTTP_ADDR", ""),
 		WakeHTTPToken:   os.Getenv("WAKE_HTTP_TOKEN"),
 		FallbackSeconds: envInt("POLL_FALLBACK_SECONDS", 0),
 		Run: func(ctx context.Context) core.RunSummary {
