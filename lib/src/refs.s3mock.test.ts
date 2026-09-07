@@ -89,6 +89,18 @@ describe("addRef", () => {
     expect(refs!.contentId).toBe(CONTENT_ID);
     expect(refs!.sourceKeys).toEqual(["a/one.mp4", "a/two.mp4"]);
   });
+
+  // Creating the index from only the incoming key would hide mappings written
+  // before the index existed, and cleanup would then GC content they still use.
+  it("seeds a new index from existing mappings", async () => {
+    putMapping("a/one.mp4", CONTENT_ID);
+    putMapping("b/two.mp4", CONTENT_ID);
+
+    await addRef(client(), BUCKET, CONTENT_ID, "a/one.mp4");
+
+    const refs = await readRefs(client(), BUCKET, CONTENT_ID);
+    expect(refs!.sourceKeys).toEqual(["a/one.mp4", "b/two.mp4"]);
+  });
 });
 
 describe("readRefs", () => {

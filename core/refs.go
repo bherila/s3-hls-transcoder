@@ -58,6 +58,11 @@ func WriteRefs(ctx context.Context, client *s3.Client, bucket, contentID string,
 // reference (cleanup would GC content that is still in use), while an extra
 // reference is harmless because cleanup re-checks each one against the mapping
 // it names and prunes the ones that no longer hold.
+//
+// When no index exists yet, the existing references are recovered by scan
+// before the new one is appended. Seeding it with only the incoming key would
+// hide every mapping written before the index existed, and cleanup would then
+// GC content those mappings still point at.
 func AddRef(ctx context.Context, client *s3.Client, bucket, contentID, sourceKey string) error {
 	refs, err := ReadRefs(ctx, client, bucket, contentID)
 	if err != nil {
@@ -69,6 +74,10 @@ func AddRef(ctx context.Context, client *s3.Client, bucket, contentID, sourceKey
 			return nil
 		}
 		keys = refs.SourceKeys
+	} else {
+		if keys, err = FindMappingsForContentID(ctx, client, bucket, contentID); err != nil {
+			return err
+		}
 	}
 	return WriteRefs(ctx, client, bucket, contentID, append(keys, sourceKey))
 }

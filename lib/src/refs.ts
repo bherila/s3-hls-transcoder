@@ -87,7 +87,12 @@ export async function addRef(
 ): Promise<void> {
   const refs = await readRefs(client, bucket, contentId);
   if (refs?.sourceKeys.includes(sourceKey)) return;
-  await writeRefs(client, bucket, contentId, [...(refs?.sourceKeys ?? []), sourceKey]);
+  // No index yet: recover the existing references by scan before appending.
+  // Seeding it with only the incoming key would hide every mapping written
+  // before the index existed, and cleanup would then GC content those
+  // mappings still point at.
+  const existing = refs?.sourceKeys ?? (await findMappingsForContentId(client, bucket, contentId));
+  await writeRefs(client, bucket, contentId, [...existing, sourceKey]);
 }
 
 /**

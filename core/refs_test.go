@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 )
 
@@ -247,6 +248,69 @@ func TestCleanupDoesNotCountAnotherPairsMappingAsStale(t *testing.T) {
 		t.Error("content referenced by another pair was garbage-collected")
 	}
 	if !fake.has("dest", MappingKey("b/live.mp4")) {
+		t.Error("another pair's mapping was deleted")
+	}
+}
+
+// A pre-index content ID referenced by two mappings must not lose the second
+// reference when the first one is rewritten. Seeding a fresh index with only
+// the incoming key would let cleanup GC content the other mapping still uses.
+func TestAddRefSeedsFromExistingMappingsWhenIndexAbsent(t *testing.T) {
+	fake := &cleanupS3Fake{}
+	client := newCleanupS3Client(t, fake)
+
+	const contentID = "sha256:shared"
+	fake.put("dest", MappingKey("a/one.mp4"),
+		testMapping("a/one.mp4", "source-a", "https://source-a.example.com", contentID))
+	fake.put("dest", MappingKey("b/two.mp4"),
+		testMapping("b/two.mp4", "source-b", "https://source-b.example.com", contentID))
+
+	if err := AddRef(context.Background(), client, "dest", contentID, "a/one.mp4"); err != nil {
+		t.Fatalf("AddRef: %v", err)
+	}
+
+	refs, err := ReadRefs(context.Background(), client, "dest", contentID)
+	if err != nil {
+		t.Fatalf("ReadRefs: %v", err)
+	}
+	if refs == nil {
+		t.Fatal("expected an index to be written")
+	}
+	if len(refs.SourceKeys) != 2 || !slices.Contains(refs.SourceKeys, "b/two.mp4") {
+		t.Errorf("index dropped a pre-existing reference: %v", refs.SourceKeys)
+	}
+}
+
+// The end-to-end consequence: with the other pair's reference preserved,
+// deleting one source must not GC content the surviving mapping points at.
+func TestCleanupRetainsContentReferencedByPreIndexMapping(t *testing.T) {
+	fake := &cleanupS3Fake{}
+	client := newCleanupS3Client(t, fake)
+
+	const contentID = "sha256:shared"
+	fake.put("dest", MappingKey("a/one.mp4"),
+		testMapping("a/one.mp4", "source-a", "https://source-a.example.com", contentID))
+	fake.put("dest", MappingKey("b/two.mp4"),
+		testMapping("b/two.mp4", "source-b", "https://source-b.example.com", contentID))
+	fake.put("dest", MasterPlaylistKey(contentID), map[string]string{"m3u8": "x"})
+
+	// Pair A rewrites its mapping, creating the index for the first time.
+	if err := AddRef(context.Background(), client, "dest", contentID, "a/one.mp4"); err != nil {
+		t.Fatalf("AddRef: %v", err)
+	}
+
+	// a/one.mp4 is then deleted from pair A's source bucket and cleanup runs.
+	res, err := RunCleanupPass(context.Background(), cleanupOptsForPairA(client))
+	if err != nil {
+		t.Fatalf("RunCleanupPass: %v", err)
+	}
+	if res.ContentIDsGCd != 0 || res.ContentIDsRetained != 1 {
+		t.Errorf("content still referenced by b/two.mp4 was not retained: %+v", res)
+	}
+	if !fake.has("dest", MasterPlaylistKey(contentID)) {
+		t.Error("GC deleted output that a live mapping still references")
+	}
+	if !fake.has("dest", MappingKey("b/two.mp4")) {
 		t.Error("another pair's mapping was deleted")
 	}
 }
