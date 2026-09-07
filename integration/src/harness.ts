@@ -20,7 +20,9 @@ import { GenericContainer, Wait, type StartedTestContainer } from "testcontainer
 
 import type { Config, LadderRung, Logger } from "@s3-hls-transcoder/lib";
 
-const MINIO_IMAGE = "minio/minio:latest";
+// Pinned: this image backs a required CI job, so tracking :latest would let an
+// upstream release break CI on an unrelated commit.
+const MINIO_IMAGE = "minio/minio:RELEASE.2025-04-22T22-12-26Z";
 const MINIO_PORT = 9000;
 export const MINIO_ACCESS_KEY = "minioadmin";
 export const MINIO_SECRET_KEY = "minioadmin";
@@ -48,7 +50,9 @@ export async function startMinio(
     .withWaitStrategy(Wait.forHttp("/minio/health/live", MINIO_PORT))
     .start();
 
-  const endpoint = `http://127.0.0.1:${container.getMappedPort(MINIO_PORT)}`;
+  // getHost(), not a hardcoded loopback: the Docker daemon may not be local
+  // (DOCKER_HOST, a VM, or a remote runner).
+  const endpoint = `http://${container.getHost()}:${container.getMappedPort(MINIO_PORT)}`;
   const s3 = new S3Client({
     endpoint,
     region: "us-east-1",

@@ -232,36 +232,37 @@ Each pair JSON object:
 
 **Overlap validation:** startup refuses to run if any source bucket overlaps with any destination bucket. Two buckets overlap when they share endpoint + bucket name AND one's prefix is a prefix of the other (including the empty prefix). Different endpoints with the same bucket name are _not_ overlap. Source-vs-source sharing is allowed. Destination buckets must be unique per run because mappings are stored under the destination bucket's global `mappings/` namespace.
 
-| Var                        | Required | Default              | Description                                                               |
-| -------------------------- | :------: | -------------------- | ------------------------------------------------------------------------- |
-| `BUCKETS_CONFIG_FILE`      |    no    | —                    | Path to JSON file containing pair array                                   |
-| `BUCKETS_CONFIG`           |    no    | —                    | JSON literal containing pair array                                        |
-| `SOURCE_BUCKET`            |    †     | —                    | Source bucket name (single-pair fallback)                                 |
-| `SOURCE_ENDPOINT`          |    †     | —                    | S3 endpoint URL (R2: `https://<account>.r2.cloudflarestorage.com`)        |
-| `SOURCE_ACCESS_KEY_ID`     |    †     | —                    | Also acts as env-level fallback in BUCKETS_CONFIG                         |
-| `SOURCE_SECRET_ACCESS_KEY` |    †     | —                    | Also env-level fallback                                                   |
-| `SOURCE_REGION`            |    no    | `auto`               |                                                                           |
-| `SOURCE_PREFIX`            |    no    | ``                   | Limit scan to this prefix (single-pair fallback only)                     |
-| `DEST_BUCKET`              |    †     | —                    |                                                                           |
-| `DEST_ENDPOINT`            |    †     | —                    |                                                                           |
-| `DEST_ACCESS_KEY_ID`       |    †     | —                    | Env-level fallback                                                        |
-| `DEST_SECRET_ACCESS_KEY`   |    †     | —                    | Env-level fallback                                                        |
-| `DEST_REGION`              |    no    | `auto`               |                                                                           |
-| `HLS_LADDER`               |    no    | (built-in)           | JSON array overriding ABR ladder                                          |
-| `MAX_RUNTIME_SECONDS`      |    no    | platform default     | Self-imposed runtime budget ceiling                                       |
-| `LOCK_TTL_MULTIPLIER`      |    no    | `1.5`                | Lock TTL = `MAX_RUNTIME × this`                                           |
-| `BUDGET_MULTIPLIER`        |    no    | `0.75`               | Budget = `MAX_RUNTIME × this`                                             |
-| `PERCEPTUAL_THRESHOLD`     |    no    | `0.95`               | Similarity score required to log an advisory perceptual match             |
-| `PERCEPTUAL_DRY_RUN`       |    no    | `false`              | Retained for compatibility; perceptual matches are always non-destructive |
-| `CLEANUP_DELETED_SOURCES`  |    no    | `false`              | If `true`, run a refcount-aware orphan-mapping GC pass each invocation    |
-| `CLEANUP_DRY_RUN`          |    no    | `false`              | If `true`, cleanup pass logs without deleting                             |
-| `MAX_CONCURRENCY`          |    no    | `1`                  | Source files processed in parallel within one run                         |
-| `LOG_LEVEL`                |    no    | `info`               | `debug` / `info` / `warn` / `error`                                       |
-| `POLL_FALLBACK_SECONDS`    |    no    | —                    | Run as a daemon: sweep cadence, and the safety net behind wake sources    |
-| `REDIS_URL`                |    no    | —                    | Wake on `LPUSH` to `TRANSCODE_QUEUE` (see "Trigger modes")                |
-| `TRANSCODE_QUEUE`          |    no    | `transcode:requests` | Redis list the worker blocks on                                           |
-| `WAKE_HTTP_ADDR`           |    no    | —                    | Listen address for the HTTP wake endpoint, e.g. `:8787`                   |
-| `WAKE_HTTP_TOKEN`          |    no    | —                    | Shared secret required by `POST /wake` when set                           |
+| Var                          | Required | Default              | Description                                                                   |
+| ---------------------------- | :------: | -------------------- | ----------------------------------------------------------------------------- |
+| `BUCKETS_CONFIG_FILE`        |    no    | —                    | Path to JSON file containing pair array                                       |
+| `BUCKETS_CONFIG`             |    no    | —                    | JSON literal containing pair array                                            |
+| `SOURCE_BUCKET`              |    †     | —                    | Source bucket name (single-pair fallback)                                     |
+| `SOURCE_ENDPOINT`            |    †     | —                    | S3 endpoint URL (R2: `https://<account>.r2.cloudflarestorage.com`)            |
+| `SOURCE_ACCESS_KEY_ID`       |    †     | —                    | Also acts as env-level fallback in BUCKETS_CONFIG                             |
+| `SOURCE_SECRET_ACCESS_KEY`   |    †     | —                    | Also env-level fallback                                                       |
+| `SOURCE_REGION`              |    no    | `auto`               |                                                                               |
+| `SOURCE_PREFIX`              |    no    | ``                   | Limit scan to this prefix (single-pair fallback only)                         |
+| `DEST_BUCKET`                |    †     | —                    |                                                                               |
+| `DEST_ENDPOINT`              |    †     | —                    |                                                                               |
+| `DEST_ACCESS_KEY_ID`         |    †     | —                    | Env-level fallback                                                            |
+| `DEST_SECRET_ACCESS_KEY`     |    †     | —                    | Env-level fallback                                                            |
+| `DEST_REGION`                |    no    | `auto`               |                                                                               |
+| `HLS_LADDER`                 |    no    | (built-in)           | JSON array overriding ABR ladder                                              |
+| `MAX_RUNTIME_SECONDS`        |    no    | platform default     | Self-imposed runtime budget ceiling                                           |
+| `LOCK_TTL_MULTIPLIER`        |    no    | `1.5`                | Lock TTL = `MAX_RUNTIME × this`                                               |
+| `BUDGET_MULTIPLIER`          |    no    | `0.75`               | Budget = `MAX_RUNTIME × this`                                                 |
+| `PERCEPTUAL_THRESHOLD`       |    no    | `0.95`               | Similarity score required to log an advisory perceptual match                 |
+| `PERCEPTUAL_DRY_RUN`         |    no    | `false`              | Retained for compatibility; perceptual matches are always non-destructive     |
+| `CLEANUP_DELETED_SOURCES`    |    no    | `false`              | If `true`, run a refcount-aware orphan-mapping GC pass each invocation        |
+| `CLEANUP_DRY_RUN`            |    no    | `false`              | If `true`, cleanup pass logs without deleting                                 |
+| `MAX_CONCURRENCY`            |    no    | `1`                  | Source files processed in parallel within one run                             |
+| `LOG_LEVEL`                  |    no    | `info`               | `debug` / `info` / `warn` / `error`                                           |
+| `POLL_FALLBACK_SECONDS`      |    no    | —                    | Run as a daemon: sweep cadence, and the safety net behind wake sources        |
+| `REDIS_URL`                  |    no    | —                    | Wake on `LPUSH` to `TRANSCODE_QUEUE` (see "Trigger modes")                    |
+| `TRANSCODE_QUEUE`            |    no    | `transcode:requests` | Redis list the worker blocks on                                               |
+| `WAKE_HTTP_ADDR`             |    no    | —                    | Listen address for the transcoder's HTTP wake endpoint, e.g. `:8787`          |
+| `IMAGEHASHER_WAKE_HTTP_ADDR` |    no    | —                    | Same, for `cmd/imagehasher` — separate so both workers can share one env file |
+| `WAKE_HTTP_TOKEN`            |    no    | —                    | Shared secret required by `POST /wake` when set                               |
 
 † Required when neither `BUCKETS_CONFIG_FILE` nor `BUCKETS_CONFIG` is set.
 
@@ -282,7 +283,7 @@ Wake sources shorten the wait between an upload and its HLS output; they never r
 Two wake sources, usable together:
 
 - **Redis** (`REDIS_URL`): the worker `BLPOP`s `TRANSCODE_QUEUE`. Suited to an app that already has Redis and can `LPUSH` after an upload.
-- **HTTP** (`WAKE_HTTP_ADDR`): the worker serves `POST /wake` (202) and `GET /healthz` (200). This is the generic bucket-event path — an S3 notification through SNS/Lambda, an R2 notification through a Queue consumer Worker, or any webhook — because it needs no client for that event source. Request bodies are ignored. Set `WAKE_HTTP_TOKEN` to require it as `Authorization: Bearer <token>` or `X-Wake-Token`; without a token, anyone who can reach the address can trigger a pass, so bind it to a private interface or put it behind a proxy.
+- **HTTP** (`WAKE_HTTP_ADDR`, or `IMAGEHASHER_WAKE_HTTP_ADDR` for `cmd/imagehasher` — the two workers need distinct addresses and read distinct variables, so one shared env file cannot make them collide on a port): the worker serves `POST /wake` (202) and `GET /healthz` (200). This is the generic bucket-event path — an S3 notification through SNS/Lambda, an R2 notification through a Queue consumer Worker, or any webhook — because it needs no client for that event source. Request bodies are ignored. Set `WAKE_HTTP_TOKEN` to require it as `Authorization: Bearer <token>` or `X-Wake-Token`; without a token, anyone who can reach the address can trigger a pass, so bind it to a private interface or put it behind a proxy.
 
 ## Per-entrypoint specifics
 
