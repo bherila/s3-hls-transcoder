@@ -5,14 +5,18 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-const refsObjectName = "refs.json"
+const refsPrefix = "refs/"
 
 // ContentRefs is the reverse index for one content ID: the source keys whose
-// mapping currently points at it. It lives at by-id/<contentID>/refs.json so
-// that GC-ing the content directory disposes of the index with it.
+// mapping currently points at it. It lives at refs/<contentID>.json, alongside
+// the other bookkeeping prefixes and deliberately outside by-id/: that prefix
+// is served to players, and the index names source keys — which are private,
+// and shared across every source that deduped onto the same content. Keeping
+// it out also leaves by-id/ genuinely immutable for caching.
 //
 // The index exists so that refcount decisions cost one GET per content ID
 // instead of a full mappings/ scan (see FindMappingsForContentID).
@@ -24,7 +28,20 @@ type ContentRefs struct {
 }
 
 // RefsKey is the dest-bucket key of a content ID's reverse index.
-func RefsKey(contentID string) string { return ByIDPrefix(contentID) + refsObjectName }
+func RefsKey(contentID string) string { return refsPrefix + contentID + ".json" }
+
+// DeleteRefs removes a content ID's reverse index. No-op if absent. Called by
+// cleanup when the content is GC'd; the index no longer lives inside the
+// by-id/ tree, so it is not removed with it.
+func DeleteRefs(ctx context.Context, client *s3.Client, bucket, contentID string) error {
+	_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(RefsKey(contentID)),
+	})
+	if err != nil && !IsNotFound(err) {
+		return err
+	}
+	return nil
+}
 
 // ReadRefs returns a content ID's reverse index, or nil if it has none.
 func ReadRefs(ctx context.Context, client *s3.Client, bucket, contentID string) (*ContentRefs, error) {
@@ -59,11 +76,15 @@ func WriteRefs(ctx context.Context, client *s3.Client, bucket, contentID string,
 // reference is harmless because cleanup re-checks each one against the mapping
 // it names and prunes the ones that no longer hold.
 //
-// When no index exists yet, the existing references are recovered by scan
-// before the new one is appended. Seeding it with only the incoming key would
-// hide every mapping written before the index existed, and cleanup would then
-// GC content those mappings still point at.
-func AddRef(ctx context.Context, client *s3.Client, bucket, contentID, sourceKey string) error {
+// seedFromScan controls what happens when no index exists yet. Pass true when
+// the content pre-dates this write (a dedup hit): its existing references are
+// recovered by scan first, because seeding the index with only the incoming key
+// would hide mappings written before the index existed and cleanup would then
+// GC content they still point at. Pass false for content transcoded in this
+// pass, where no mapping can reference it yet — scanning there would put an
+// O(N) whole-bucket read on the ingest path, which is the cost this index
+// exists to avoid.
+func AddRef(ctx context.Context, client *s3.Client, bucket, contentID, sourceKey string, seedFromScan bool) error {
 	refs, err := ReadRefs(ctx, client, bucket, contentID)
 	if err != nil {
 		return err
@@ -74,7 +95,7 @@ func AddRef(ctx context.Context, client *s3.Client, bucket, contentID, sourceKey
 			return nil
 		}
 		keys = refs.SourceKeys
-	} else {
+	} else if seedFromScan {
 		if keys, err = FindMappingsForContentID(ctx, client, bucket, contentID); err != nil {
 			return err
 		}

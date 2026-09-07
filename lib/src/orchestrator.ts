@@ -304,6 +304,7 @@ async function processSource(args: {
         bucket: pair.dest.bucket,
         mapping: buildMapping(source, pair, contentId),
         previous: existing,
+        contentPreexisting: true,
         logger,
       });
       return "deduped";
@@ -439,6 +440,7 @@ async function processSource(args: {
         bucket: pair.dest.bucket,
         mapping: buildMapping(source, pair, contentId),
         previous: existing,
+        contentPreexisting: false,
         logger,
       });
 
@@ -465,10 +467,16 @@ async function writeMappingWithRefs(args: {
   bucket: string;
   mapping: SourceMapping;
   previous: SourceMapping | null;
+  /**
+   * Whether the content was already in the bucket before this write (a dedup
+   * hit), which decides whether a missing index is seeded from a scan — see
+   * {@link addRef}.
+   */
+  contentPreexisting: boolean;
   logger: Logger;
 }): Promise<void> {
-  const { client, bucket, mapping, previous, logger } = args;
-  await addRef(client, bucket, mapping.contentId, mapping.sourceKey);
+  const { client, bucket, mapping, previous, contentPreexisting, logger } = args;
+  await addRef(client, bucket, mapping.contentId, mapping.sourceKey, contentPreexisting);
   await writeMapping(client, bucket, mapping);
   if (previous && previous.contentId && previous.contentId !== mapping.contentId) {
     // The source bytes changed: this key no longer references the old content.

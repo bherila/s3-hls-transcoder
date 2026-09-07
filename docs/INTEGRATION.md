@@ -93,8 +93,8 @@ which play HLS natively.
 **Use `hlsRoot`. Do not build the path yourself.** `by-id/<contentId>/...` is an
 internal layout that leaves room for future identifier schemes; `hlsRoot` is the
 part that is promised. Everything else under the destination bucket —
-`fingerprints/`, `.transcoder.lock`, `.processing` — is transcoder bookkeeping,
-not API.
+`fingerprints/`, `refs/`, `.transcoder.lock`, `.processing` — is transcoder
+bookkeeping, not API.
 
 Two things to know about the output tree:
 
