@@ -28,7 +28,11 @@ const (
 // pdqHash for near-duplicate detection. App-neutral by design — no consumer
 // names or columns leak into the format.
 type ImageMapping struct {
-	SourceKey          string `json:"sourceKey"`
+	SourceKey string `json:"sourceKey"`
+	// SourceBucket/SourceEndpoint record which pair wrote the mapping so that
+	// cleanup never treats another pair's mapping as one of its own orphans.
+	SourceBucket       string `json:"sourceBucket"`
+	SourceEndpoint     string `json:"sourceEndpoint"`
 	SourceEtag         string `json:"sourceEtag"`
 	SourceSize         int64  `json:"sourceSize"`
 	SourceLastModified string `json:"sourceLastModified"`
@@ -166,7 +170,7 @@ func runImagePair(ctx context.Context, a pairArgs) (pairResult, bool) {
 	if a.cfg.CleanupDeletedSources && time.Now().Before(a.budgetEndsAt) {
 		if _, err := RunImageCleanupPass(ctx, CleanupOptions{
 			SourceClient: a.sourceClient, DestClient: a.destClient,
-			SourceBucket: a.pair.Source.Bucket, DestBucket: a.pair.Dest.Bucket,
+			SourceBucket: a.pair.Source.Bucket, SourceEndpoint: a.pair.Source.Endpoint, DestBucket: a.pair.Dest.Bucket,
 			SourcePrefix: a.pair.Source.Prefix, Logger: a.logger, DryRun: a.cfg.CleanupDryRun,
 		}); err != nil {
 			a.logger.Error("image cleanup pass failed", Fields{"pairIndex": a.pairIndex, "error": err.Error()})
@@ -177,7 +181,10 @@ func runImagePair(ctx context.Context, a pairArgs) (pairResult, bool) {
 }
 
 // RunImageCleanupPass deletes image-mapping objects whose source image no longer
-// exists in the source bucket. Unlike the video cleanup it needs no refcounting:
+// exists in the source bucket. Only mappings tagged with this pair's source
+// bucket and endpoint are candidates, so one pair's cleanup cannot delete
+// another pair's mappings when several pairs share a destination bucket.
+// Unlike the video cleanup it needs no refcounting:
 // each mapping is a row-private hash with no shared output tree to GC.
 func RunImageCleanupPass(ctx context.Context, opts CleanupOptions) (CleanupResult, error) {
 	opts.Logger.Info("image cleanup: enumerating live source keys", Fields{"sourceBucket": opts.SourceBucket})
@@ -212,6 +219,16 @@ func RunImageCleanupPass(ctx context.Context, opts CleanupOptions) (CleanupResul
 				continue
 			}
 			if liveSources[sourceKey] {
+				continue
+			}
+			m, err := ReadImageMapping(ctx, opts.DestClient, opts.DestBucket, sourceKey)
+			if err != nil {
+				return res, err
+			}
+			if m == nil {
+				continue
+			}
+			if m.SourceBucket != opts.SourceBucket || m.SourceEndpoint != opts.SourceEndpoint {
 				continue
 			}
 			res.OrphanMappingsFound++
@@ -293,7 +310,8 @@ func processImage(ctx context.Context, a pairArgs, source SourceObject) (process
 
 	// 5. Write mapping.
 	m := ImageMapping{
-		SourceKey: source.Key, SourceEtag: source.ETag, SourceSize: source.Size,
+		SourceKey: source.Key, SourceBucket: a.pair.Source.Bucket, SourceEndpoint: a.pair.Source.Endpoint,
+		SourceEtag: source.ETag, SourceSize: source.Size,
 		SourceLastModified: source.LastModified.UTC().Format(time.RFC3339Nano),
 		PDQHash:            result.Hash,
 		Quality:            result.Quality,
