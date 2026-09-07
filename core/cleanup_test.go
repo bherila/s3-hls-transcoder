@@ -251,3 +251,91 @@ func TestCleanupDeletesOrphansOwnedByCurrentPair(t *testing.T) {
 		t.Error("orphaned fingerprint was not deleted")
 	}
 }
+
+func testImageMapping(sourceKey, sourceBucket, sourceEndpoint string) ImageMapping {
+	return ImageMapping{
+		SourceKey: sourceKey, SourceBucket: sourceBucket, SourceEndpoint: sourceEndpoint,
+		SourceEtag: "etag", SourceSize: 512, SourceLastModified: "2026-01-01T00:00:00Z",
+		PDQHash: strings.Repeat("a", 64), Quality: 100,
+		HashedAt: "2026-01-01T00:00:00Z", HasherVersion: "test",
+	}
+}
+
+func TestImageCleanupIgnoresMappingsOwnedByAnotherPair(t *testing.T) {
+	fake := &cleanupS3Fake{}
+	client := newCleanupS3Client(t, fake)
+
+	// The shared dest holds a mapping pair B wrote, for a key absent from pair A's bucket.
+	fake.put("source-a", "a/live.jpg", map[string]string{"data": "x"})
+	fake.put("dest", ImageMappingKey("b/live-in-pair-B.jpg"),
+		testImageMapping("b/live-in-pair-B.jpg", "source-b", "https://source-b.example.com"))
+
+	res, err := RunImageCleanupPass(context.Background(), cleanupOptsForPairA(client))
+	if err != nil {
+		t.Fatalf("RunImageCleanupPass: %v", err)
+	}
+	if res.OrphanMappingsFound != 0 || res.OrphanMappingsDeleted != 0 {
+		t.Errorf("expected no cleanup activity, got %+v", res)
+	}
+	if !fake.has("dest", ImageMappingKey("b/live-in-pair-B.jpg")) {
+		t.Error("pair B's image mapping was deleted")
+	}
+}
+
+func TestImageCleanupIgnoresLegacyMappingsWithoutOwnership(t *testing.T) {
+	fake := &cleanupS3Fake{}
+	client := newCleanupS3Client(t, fake)
+
+	fake.put("dest", ImageMappingKey("a/old.jpg"), testImageMapping("a/old.jpg", "", ""))
+
+	res, err := RunImageCleanupPass(context.Background(), cleanupOptsForPairA(client))
+	if err != nil {
+		t.Fatalf("RunImageCleanupPass: %v", err)
+	}
+	if res.OrphanMappingsFound != 0 {
+		t.Errorf("legacy image mapping treated as orphan: %+v", res)
+	}
+	if !fake.has("dest", ImageMappingKey("a/old.jpg")) {
+		t.Error("legacy image mapping was deleted")
+	}
+}
+
+func TestImageCleanupDeletesOrphansOwnedByCurrentPair(t *testing.T) {
+	fake := &cleanupS3Fake{}
+	client := newCleanupS3Client(t, fake)
+
+	fake.put("dest", ImageMappingKey("a/deleted.jpg"),
+		testImageMapping("a/deleted.jpg", "source-a", "https://source-a.example.com"))
+
+	res, err := RunImageCleanupPass(context.Background(), cleanupOptsForPairA(client))
+	if err != nil {
+		t.Fatalf("RunImageCleanupPass: %v", err)
+	}
+	if res.OrphanMappingsFound != 1 || res.OrphanMappingsDeleted != 1 {
+		t.Errorf("unexpected result: %+v", res)
+	}
+	if fake.has("dest", ImageMappingKey("a/deleted.jpg")) {
+		t.Error("orphan image mapping was not deleted")
+	}
+}
+
+func TestImageCleanupDryRunDeletesNothing(t *testing.T) {
+	fake := &cleanupS3Fake{}
+	client := newCleanupS3Client(t, fake)
+
+	fake.put("dest", ImageMappingKey("a/deleted.jpg"),
+		testImageMapping("a/deleted.jpg", "source-a", "https://source-a.example.com"))
+
+	opts := cleanupOptsForPairA(client)
+	opts.DryRun = true
+	res, err := RunImageCleanupPass(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("RunImageCleanupPass: %v", err)
+	}
+	if res.OrphanMappingsFound != 1 || res.OrphanMappingsDeleted != 1 {
+		t.Errorf("dry run should still report the orphan: %+v", res)
+	}
+	if !fake.has("dest", ImageMappingKey("a/deleted.jpg")) {
+		t.Error("dry run deleted the mapping")
+	}
+}

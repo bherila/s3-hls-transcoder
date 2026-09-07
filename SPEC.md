@@ -66,6 +66,8 @@ Mapping JSON:
 ```json
 {
   "sourceKey": "videos/2024/intro.mp4",
+  "sourceBucket": "my-source-bucket",
+  "sourceEndpoint": "https://<account>.r2.cloudflarestorage.com",
   "sourceEtag": "<etag>",
   "sourceSize": 12345678,
   "sourceLastModified": "2024-01-15T10:30:00Z",
@@ -76,7 +78,9 @@ Mapping JSON:
 }
 ```
 
-`hlsRoot` may point at a different content ID for two source keys whose bytes are identical (byte-hash dedup) or whose video content is perceptually similar (perceptual dedup).
+`hlsRoot` may point at the same content ID for two source keys whose bytes are identical (byte-hash dedup). Perceptual similarity never causes this: matches are advisory only (§5).
+
+`sourceBucket` and `sourceEndpoint` record which configured pair wrote the mapping. Clients can ignore them; the cleanup pass (§6) uses them so that pairs sharing a destination bucket never delete each other's mappings.
 
 ---
 
@@ -147,7 +151,7 @@ Off by default. When enabled, runs once per bucket pair after all source keys ha
 
 1. **Enumerate live source keys** by re-scanning the source bucket (no extension filter — every key counts as live).
 2. **Enumerate mapping keys** under `<dest>/mappings/`.
-3. **Compute orphans:** mappings whose decoded source key is NOT in the live set.
+3. **Compute orphans:** mappings whose decoded source key is NOT in the live set AND whose `sourceBucket`/`sourceEndpoint` match the pair being cleaned. Mappings written by another pair — or by a version that predates those fields — are skipped.
 4. **Group orphans by `contentId`.**
 5. **For each contentId in the orphan set:**
    - Run `findMappingsForContentId(contentId)` to count how many _live_ mappings still point at it.
@@ -157,7 +161,9 @@ Off by default. When enabled, runs once per bucket pair after all source keys ha
 
 `CLEANUP_DRY_RUN=true` causes the cleanup pass to log every action it would take without performing any deletes.
 
-The cleanup pass respects `source.prefix` — it only treats mappings _under_ a pair's source prefix as candidates. This protects shared dest buckets with multiple source pairs.
+The cleanup pass respects `source.prefix` — it only treats mappings _under_ a pair's source prefix as candidates — and, independently, only considers mappings its own pair wrote (step 3). Either check alone protects shared dest buckets with multiple source pairs; together they also cover pairs whose prefixes overlap.
+
+The image worker's cleanup pass (`image-mappings/`) applies the same ownership check. It needs no refcounting: each image mapping stands alone, so an orphan mapping is simply deleted.
 
 ---
 
