@@ -79,9 +79,9 @@ afterEach(() => s3Mock.reset());
 
 describe("addRef", () => {
   it("creates the index, appends to it, and never duplicates a key", async () => {
-    await addRef(client(), BUCKET, CONTENT_ID, "a/one.mp4");
-    await addRef(client(), BUCKET, CONTENT_ID, "a/two.mp4");
-    await addRef(client(), BUCKET, CONTENT_ID, "a/one.mp4");
+    await addRef(client(), BUCKET, CONTENT_ID, "a/one.mp4", false);
+    await addRef(client(), BUCKET, CONTENT_ID, "a/two.mp4", false);
+    await addRef(client(), BUCKET, CONTENT_ID, "a/one.mp4", false);
 
     const refs = await readRefs(client(), BUCKET, CONTENT_ID);
     expect(refs).not.toBeNull();
@@ -90,16 +90,38 @@ describe("addRef", () => {
     expect(refs!.sourceKeys).toEqual(["a/one.mp4", "a/two.mp4"]);
   });
 
+  // Content transcoded in this pass cannot be referenced by any mapping yet, so
+  // creating its index must not scan — that would put the O(N) read this index
+  // exists to avoid onto the ingest path of every new upload.
+  it("does not scan for freshly transcoded content", async () => {
+    putMapping("a/unrelated.mp4", "sha256:other");
+    gets = [];
+
+    await addRef(client(), BUCKET, CONTENT_ID, "a/new.mp4", false);
+
+    expect(gets).not.toContain(mappingKey("a/unrelated.mp4"));
+    const refs = await readRefs(client(), BUCKET, CONTENT_ID);
+    expect(refs!.sourceKeys).toEqual(["a/new.mp4"]);
+  });
+
   // Creating the index from only the incoming key would hide mappings written
   // before the index existed, and cleanup would then GC content they still use.
   it("seeds a new index from existing mappings", async () => {
     putMapping("a/one.mp4", CONTENT_ID);
     putMapping("b/two.mp4", CONTENT_ID);
 
-    await addRef(client(), BUCKET, CONTENT_ID, "a/one.mp4");
+    await addRef(client(), BUCKET, CONTENT_ID, "a/one.mp4", true);
 
     const refs = await readRefs(client(), BUCKET, CONTENT_ID);
     expect(refs!.sourceKeys).toEqual(["a/one.mp4", "b/two.mp4"]);
+  });
+});
+
+describe("refsKey", () => {
+  // by-id/ is served to players; the index names source keys belonging to every
+  // source that deduped onto the content.
+  it("is outside the player-facing by-id/ prefix", () => {
+    expect(refsKey(CONTENT_ID).startsWith("by-id/")).toBe(false);
   });
 });
 
@@ -123,8 +145,8 @@ describe("removeRef", () => {
   });
 
   it("drops only the named key", async () => {
-    await addRef(client(), BUCKET, CONTENT_ID, "a/one.mp4");
-    await addRef(client(), BUCKET, CONTENT_ID, "a/two.mp4");
+    await addRef(client(), BUCKET, CONTENT_ID, "a/one.mp4", false);
+    await addRef(client(), BUCKET, CONTENT_ID, "a/two.mp4", false);
 
     await removeRef(client(), BUCKET, CONTENT_ID, "a/one.mp4");
 

@@ -3,7 +3,7 @@ import { deleteByIdDirectory } from "./dest.js";
 import { deleteFingerprint, removeIndexEntry } from "./fingerprintIndex.js";
 import type { Logger } from "./logger.js";
 import { mappingKey, readMapping } from "./mapping.js";
-import { listRefs, writeRefs } from "./refs.js";
+import { deleteRefs, listRefs, writeRefs } from "./refs.js";
 import { scanSource } from "./scanner.js";
 
 const MAPPING_PREFIX = "mappings/";
@@ -126,6 +126,9 @@ export async function runCleanupPass(opts: CleanupOptions): Promise<CleanupResul
         objectsDeleted += await deleteByIdDirectory(destClient, destBucket, contentId);
         await deleteFingerprint(destClient, destBucket, contentId);
         await removeIndexEntry(destClient, destBucket, contentId);
+        // The reverse index lives outside by-id/, so deleting the content tree
+        // no longer disposes of it.
+        await deleteRefs(destClient, destBucket, contentId);
       }
     } else {
       logger.info("cleanup: contentId still has live references; retaining", {

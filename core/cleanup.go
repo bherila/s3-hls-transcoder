@@ -102,6 +102,11 @@ func RunCleanupPass(ctx context.Context, opts CleanupOptions) (CleanupResult, er
 				if err := DeleteFingerprint(ctx, opts.DestClient, opts.DestBucket, contentID); err != nil {
 					return res, err
 				}
+				// The reverse index lives outside by-id/, so deleting the
+				// content tree no longer disposes of it.
+				if err := DeleteRefs(ctx, opts.DestClient, opts.DestBucket, contentID); err != nil {
+					return res, err
+				}
 				if err := RemoveIndexEntry(ctx, opts.DestClient, opts.DestBucket, contentID); err != nil {
 					return res, err
 				}
@@ -123,7 +128,7 @@ func RunCleanupPass(ctx context.Context, opts CleanupOptions) (CleanupResult, er
 		}
 		// Retained content keeps its index; rewrite it without the references
 		// just deleted (and any that verification found stale). GC-d content
-		// took its index down with the rest of its by-id/ directory.
+		// had its index deleted above.
 		if liveCount > 0 && len(liveKeys) != len(refs) {
 			if err := WriteRefs(ctx, opts.DestClient, opts.DestBucket, contentID, liveKeys); err != nil {
 				return res, err
