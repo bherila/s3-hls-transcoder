@@ -82,9 +82,8 @@ export function isCachedMapping(
  * Returns source keys whose mapping currently points at `contentId`. Used by
  * cleanup to determine whether a content ID is still referenced.
  *
- * O(N) GETs over the mappings/ prefix. Acceptable while mapping count is
- * modest; a reverse-index file under by-id/<id>/refs.json would be the
- * natural optimization later.
+ * O(N) GETs over the mappings/ prefix — the fallback used to backfill the
+ * by-id/<id>/refs.json reverse index (see `listRefs`), not a hot path.
  */
 export async function findMappingsForContentId(
   client: S3Client,

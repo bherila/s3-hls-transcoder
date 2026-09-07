@@ -22,6 +22,10 @@ export {
   findMappingsForContentId,
 } from "./mapping.js";
 
+// Reverse index (content ID → referencing source keys)
+export type { ContentRefs } from "./refs.js";
+export { refsKey, readRefs, writeRefs, addRef, removeRef, listRefs } from "./refs.js";
+
 // Lock + lease
 export type { LockBody, LockHandle, AcquireOptions } from "./lock.js";
 export {

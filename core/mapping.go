@@ -56,7 +56,8 @@ func IsCachedMapping(m *SourceMapping, etag string, size int64) bool {
 }
 
 // FindMappingsForContentID returns source keys whose mapping currently points at
-// contentID. O(N) GETs over the mappings/ prefix.
+// contentID. O(N) GETs over the mappings/ prefix — the fallback used to backfill
+// the by-id/<contentID>/refs.json reverse index (see ListRefs), not a hot path.
 func FindMappingsForContentID(ctx context.Context, client *s3.Client, bucket, contentID string) ([]string, error) {
 	var result []string
 	var token *string

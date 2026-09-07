@@ -73,7 +73,10 @@ func RunCleanupPass(ctx context.Context, opts CleanupOptions) (CleanupResult, er
 
 	res := CleanupResult{OrphanMappingsFound: len(orphans)}
 	for contentID, orphanSourceKeys := range byContentID {
-		allMappings, err := FindMappingsForContentID(ctx, opts.DestClient, opts.DestBucket, contentID)
+		// The reverse index answers "who still points at this content?" in one
+		// GET; only content written before the index existed falls back to the
+		// full mappings/ scan (and is backfilled by ListRefs).
+		refs, err := ListRefs(ctx, opts.DestClient, opts.DestBucket, contentID, !opts.DryRun)
 		if err != nil {
 			return res, err
 		}
@@ -81,12 +84,11 @@ func RunCleanupPass(ctx context.Context, opts CleanupOptions) (CleanupResult, er
 		for _, k := range orphanSourceKeys {
 			orphanSet[k] = true
 		}
-		liveCount := 0
-		for _, k := range allMappings {
-			if !orphanSet[k] {
-				liveCount++
-			}
+		liveKeys, err := verifyLiveRefs(ctx, opts, contentID, refs, orphanSet)
+		if err != nil {
+			return res, err
 		}
+		liveCount := len(liveKeys)
 
 		if liveCount == 0 {
 			opts.Logger.Info("cleanup: contentId fully orphaned; gc-ing transcoded output", Fields{"contentId": contentID, "orphanMappings": len(orphanSourceKeys), "dryRun": opts.DryRun})
@@ -111,12 +113,20 @@ func RunCleanupPass(ctx context.Context, opts CleanupOptions) (CleanupResult, er
 
 		if opts.DryRun {
 			res.OrphanMappingsDeleted += len(orphanSourceKeys)
-		} else {
-			for _, sk := range orphanSourceKeys {
-				if _, err := opts.DestClient.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(opts.DestBucket), Key: aws.String(MappingKey(sk))}); err != nil {
-					return res, err
-				}
-				res.OrphanMappingsDeleted++
+			continue
+		}
+		for _, sk := range orphanSourceKeys {
+			if _, err := opts.DestClient.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(opts.DestBucket), Key: aws.String(MappingKey(sk))}); err != nil {
+				return res, err
+			}
+			res.OrphanMappingsDeleted++
+		}
+		// Retained content keeps its index; rewrite it without the references
+		// just deleted (and any that verification found stale). GC-d content
+		// took its index down with the rest of its by-id/ directory.
+		if liveCount > 0 && len(liveKeys) != len(refs) {
+			if err := WriteRefs(ctx, opts.DestClient, opts.DestBucket, contentID, liveKeys); err != nil {
+				return res, err
 			}
 		}
 	}
@@ -167,4 +177,29 @@ func findOrphanMappings(ctx context.Context, opts CleanupOptions, liveSources ma
 			return orphans, nil
 		}
 	}
+}
+
+// verifyLiveRefs returns the reverse-index entries that still hold: a source
+// key not in orphanSet whose mapping object exists and still points at
+// contentID. The index is deliberately allowed to over-report (a reference is
+// added before its mapping is written and removed after it is deleted), so
+// every retention decision is confirmed against the named mapping — one GET per
+// candidate, against the whole-bucket scan this replaces.
+func verifyLiveRefs(ctx context.Context, opts CleanupOptions, contentID string, refs []string, orphanSet map[string]bool) ([]string, error) {
+	var live []string
+	for _, sk := range refs {
+		if orphanSet[sk] {
+			continue
+		}
+		m, err := ReadMapping(ctx, opts.DestClient, opts.DestBucket, sk)
+		if err != nil {
+			return nil, err
+		}
+		if m == nil || m.ContentID != contentID {
+			opts.Logger.Debug("cleanup: pruning stale reverse-index entry", Fields{"contentId": contentID, "sourceKey": sk})
+			continue
+		}
+		live = append(live, sk)
+	}
+	return live, nil
 }

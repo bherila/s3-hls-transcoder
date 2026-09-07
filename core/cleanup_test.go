@@ -25,6 +25,7 @@ type cleanupS3Fake struct {
 	mu      sync.Mutex
 	objects map[string][]byte
 	deletes []string
+	gets    []string
 }
 
 func newCleanupS3Client(t *testing.T, fake *cleanupS3Fake) *s3.Client {
@@ -57,6 +58,18 @@ func (f *cleanupS3Fake) has(bucket, key string) bool {
 	defer f.mu.Unlock()
 	_, ok := f.objects[bucket+"/"+key]
 	return ok
+}
+
+func (f *cleanupS3Fake) getCount(bucket, key string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, g := range f.gets {
+		if g == bucket+"/"+key {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *cleanupS3Fake) deletedKeys() []string {
@@ -116,6 +129,7 @@ func (f *cleanupS3Fake) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet:
 		f.mu.Lock()
 		body, ok := f.objects[bucket+"/"+key]
+		f.gets = append(f.gets, bucket+"/"+key)
 		f.mu.Unlock()
 		if !ok {
 			http.Error(w, "not found", http.StatusNotFound)

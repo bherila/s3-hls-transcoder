@@ -112,7 +112,7 @@ Strict sequence. Steps numbered for cross-reference; side effects called out exp
       9. **Transcode** to HLS using ffmpeg with the effective ladder. Output: per-rung `index.m3u8` + `seg_*.m4s` + `init.mp4`, plus `master.m3u8` referencing all rungs.
       10. **Upload HLS output.** All segments + playlists uploaded under `by-id/<contentId>/`.
       11. **Upload fingerprint** (`fingerprints/<contentId>.bin`) and **upsert** into `fingerprints/index.json`.
-      12. **Write metadata.json** (probe results + ladder used + encoder version) and **write mapping** for this source key.
+      12. **Write metadata.json** (probe results + ladder used + encoder version), **add this source key to `by-id/<contentId>/refs.json`**, and **write mapping** for this source key. If the mapping previously pointed at a different content ID, the source key is removed from that content's `refs.json` afterwards.
       13. **Release per-video lease** (DELETE `.processing`).
       14. Increment `processed` counter.
    3. **Cleanup pass** (only if `CLEANUP_DELETED_SOURCES=true`): see §6.
@@ -138,7 +138,7 @@ Two layers, applied in order:
 
 | Layer          | Trigger                                                                   | Cost                            | Action                                                                                                 |
 | -------------- | ------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| **Byte-hash**  | SHA-256 of source bytes matches an existing `by-id/sha256:<hash>/` entry  | Always computed during download | Write mapping pointing at existing entry. No transcode.                                                |
+| **Byte-hash**  | SHA-256 of source bytes matches an existing `by-id/sha256:<hash>/` entry  | Always computed during download | Add a reference and write a mapping pointing at the existing entry. No transcode.                      |
 | **Perceptual** | dHash similarity ≥ `PERCEPTUAL_THRESHOLD` against an existing fingerprint | One ffmpeg pass per new video   | Advisory only: log candidate matches and quality comparison; do not reuse, repoint, or delete content. |
 
 Perceptual matching is intentionally advisory because fingerprints do not prove tenant, owner, source-prefix, ACL, or exact-byte equivalence. A match must not cause mappings to be reused/repointed or existing outputs to be garbage-collected without an ownership-aware authorization design.
@@ -156,10 +156,13 @@ Off by default. When enabled, runs once per bucket pair after all source keys ha
 3. **Compute orphans:** mappings whose decoded source key is NOT in the live set AND whose `sourceBucket`/`sourceEndpoint` match the pair being cleaned. Mappings written by another pair — or by a version that predates those fields — are skipped.
 4. **Group orphans by `contentId`.**
 5. **For each contentId in the orphan set:**
-   - Run `findMappingsForContentId(contentId)` to count how many _live_ mappings still point at it.
-   - If `liveCount == 0` → delete `by-id/<contentId>/` (recursive), delete `fingerprints/<contentId>.bin`, and remove the index entry.
-   - If `liveCount > 0` → leave the transcoded output and fingerprint in place (other live source paths still use it).
+   - Read `by-id/<contentId>/refs.json` for the source keys that reference it. If the object is absent, fall back to `findMappingsForContentId(contentId)` (a full `mappings/` scan) and backfill the index from the result.
+   - Confirm each referenced key that is not itself an orphan: read `mappings/<key>.json` and keep the reference only if it exists and still names this contentId. This yields `liveCount` and prunes references left behind by interrupted runs.
+   - If `liveCount == 0` → delete `by-id/<contentId>/` (recursive, which includes `refs.json`), delete `fingerprints/<contentId>.bin`, and remove the index entry.
+   - If `liveCount > 0` → leave the transcoded output and fingerprint in place (other live source paths still use it) and rewrite `refs.json` with the surviving references.
 6. **Always delete the orphan mapping objects themselves**, regardless of refcount.
+
+The reverse index makes step 5 cost one GET per orphaned content ID plus one per surviving reference, instead of a GET of every mapping in the bucket per orphaned content ID. See "Reverse index" in [PLAN.md](./PLAN.md).
 
 `CLEANUP_DRY_RUN=true` causes the cleanup pass to log every action it would take without performing any deletes.
 
