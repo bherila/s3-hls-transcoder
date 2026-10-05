@@ -16,9 +16,12 @@ type ProbeResult struct {
 	// Width and Height are the display size: the coded size with the
 	// stream's rotation applied (phones store portrait video as rotated
 	// landscape frames).
-	Width           int
-	Height          int
-	Rotation        int
+	Width    int
+	Height   int
+	Rotation int
+	// Anamorphic is true when the stream's pixels aren't square (SAR ≠ 1:1);
+	// Width already includes the SAR.
+	Anamorphic      bool
 	DurationSeconds float64
 	BitrateKbps     *int
 	VideoCodec      string
@@ -93,8 +96,10 @@ func parseProbeOutput(raw []byte, input string) (*ProbeResult, error) {
 	width, height := video.Width, video.Height
 	// Non-square pixels: the display width is the coded width × SAR, which is
 	// what the rungs must be sized from (FFmpeg: DAR = iw/ih × sar).
+	anamorphic := false
 	if num, den, ok := parseRatio(video.SampleAspectRatio); ok && num != den {
 		width = int(math.Round(float64(width) * float64(num) / float64(den)))
+		anamorphic = true
 	}
 	if rotation%180 != 0 {
 		width, height = height, width
@@ -103,6 +108,7 @@ func parseProbeOutput(raw []byte, input string) (*ProbeResult, error) {
 		Width:      width,
 		Height:     height,
 		Rotation:   rotation,
+		Anamorphic: anamorphic,
 		VideoCodec: video.CodecName,
 		HasAudio:   audio != nil,
 	}

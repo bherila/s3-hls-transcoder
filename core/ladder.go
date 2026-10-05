@@ -109,6 +109,15 @@ func needsReframe(w, h int, stored []LadderRung) bool {
 	return false
 }
 
+// legacyLayoutWrong reports whether an encoder before 0.2.0 laid this source
+// out wrongly: its display aspect differs from a stored rung (see
+// needsReframe), or its pixels aren't square — those encoders sized from the
+// coded dimensions and kept the non-square SAR, so even a 16:9 anamorphic
+// source came out as a narrower picture padded into the 16:9 box.
+func legacyLayoutWrong(p *ProbeResult, stored []LadderRung) bool {
+	return p.Anamorphic || needsReframe(p.Width, p.Height, stored)
+}
+
 // versionBelow reports whether dotted version v sorts before threshold. An
 // empty or malformed v counts as oldest.
 func versionBelow(v, threshold string) bool {

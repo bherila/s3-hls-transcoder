@@ -200,3 +200,23 @@ func TestUploadTierPublishesMasterLast(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyLayoutWrongReencodesAnamorphicSources(t *testing.T) {
+	// 720x480 with SAR 32:27 displays at 16:9, matching the 16:9 boxes, but the
+	// old encoder sized it from the coded 3:2 and padded it: re-encode it.
+	anamorphic, err := parseProbeOutput([]byte(`{"streams":[{"codec_type":"video","codec_name":"mpeg2video","width":720,"height":480,"sample_aspect_ratio":"32:27"}],"format":{}}`), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !anamorphic.Anamorphic || !legacyLayoutWrong(anamorphic, DefaultLadder) {
+		t.Errorf("anamorphic 16:9 source must be re-encoded: %+v", anamorphic)
+	}
+
+	square, err := parseProbeOutput([]byte(`{"streams":[{"codec_type":"video","codec_name":"h264","width":1920,"height":1080,"sample_aspect_ratio":"1:1"}],"format":{}}`), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if square.Anamorphic || legacyLayoutWrong(square, DefaultLadder) {
+		t.Errorf("square-pixel 16:9 source must be restamped, not re-encoded: %+v", square)
+	}
+}

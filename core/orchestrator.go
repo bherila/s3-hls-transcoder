@@ -349,7 +349,7 @@ func legacyOutputNeedsReencode(ctx context.Context, a pairArgs, source SourceObj
 	if err != nil {
 		return false, err
 	}
-	if md == nil || needsReframe(probe.Width, probe.Height, md.Ladder) {
+	if md == nil || legacyLayoutWrong(probe, md.Ladder) {
 		return true, nil
 	}
 
