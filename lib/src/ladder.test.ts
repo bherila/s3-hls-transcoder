@@ -38,6 +38,11 @@ describe("computeEffectiveLadder", () => {
   it("never upscales below the lowest rung", () => {
     expect(dims(320, 240)).toEqual([["360p", 320, 240, 800]]);
   });
+
+  it("rounds odd sizes without exceeding the source", () => {
+    expect(dims(319, 239)).toEqual([["360p", 318, 238, 800]]);
+    expect(dims(641, 360)).toEqual([["360p", 640, 360, 800]]);
+  });
 });
 
 describe("buildHlsArgs", () => {

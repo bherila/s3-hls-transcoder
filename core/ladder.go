@@ -63,16 +63,21 @@ func computeEffectiveLadder(full []LadderRung, w, h int, sourceBitrateKbps *int)
 }
 
 // scaleToShortEdge returns the w×h size scaled so its short edge is `short`,
-// with both sides rounded to even numbers (required by libx264 4:2:0).
+// with both sides even (required by libx264 4:2:0). Sides round to the nearest
+// even number but never past the source's own (even-floored) size, so rounding
+// can't upscale an odd-sized source by a pixel.
 func scaleToShortEdge(w, h, short int) (int, int) {
-	if w >= h {
-		return roundEven(float64(w) * float64(short) / float64(h)), roundEven(float64(short))
-	}
-	return roundEven(float64(short)), roundEven(float64(h) * float64(short) / float64(w))
+	sw := min(roundEven(float64(w)*float64(short)/float64(min(w, h))), floorEven(w))
+	sh := min(roundEven(float64(h)*float64(short)/float64(min(w, h))), floorEven(h))
+	return sw, sh
 }
 
 func roundEven(v float64) int {
 	return max(2, 2*int(math.Round(v/2)))
+}
+
+func floorEven(v int) int {
+	return max(2, v-v%2)
 }
 
 // needsReframe reports whether an encoder before 0.2.0 produced a wrong layout

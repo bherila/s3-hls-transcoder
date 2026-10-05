@@ -52,6 +52,12 @@ func TestEffectiveLadderKeepsOrientationAndAspect(t *testing.T) {
 		{"odd sizes round to even", 1081, 1921, nil, []rendition{
 			{"360p", 360, 640, 800}, {"480p", 480, 852, 1400}, {"720p", 720, 1280, 2800}, {"1080p", 1080, 1920, 5000},
 		}},
+		{"odd below-ladder source rounds down, never up", 319, 239, nil, []rendition{
+			{"360p", 318, 238, 800},
+		}},
+		{"rounding can't widen past the source", 641, 360, nil, []rendition{
+			{"360p", 640, 360, 800},
+		}},
 		{"bitrate cap never drops below the floor", 1920, 1080, kbps(50), []rendition{
 			{"360p", 640, 360, 200}, {"480p", 854, 480, 200}, {"720p", 1280, 720, 200}, {"1080p", 1920, 1080, 200},
 		}},

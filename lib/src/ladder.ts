@@ -15,12 +15,19 @@ const SOURCE_BITRATE_HEADROOM = 1.25;
 const shortEdge = (r: LadderRung): number => Math.min(r.width, r.height);
 
 const roundEven = (v: number): number => Math.max(2, 2 * Math.round(v / 2));
+const floorEven = (v: number): number => Math.max(2, v - (v % 2));
 
-/** The w×h size scaled so its short edge is `short`, both sides even. */
+/**
+ * The w×h size scaled so its short edge is `short`, both sides even. Sides round
+ * to the nearest even number but never past the source's own (even-floored)
+ * size, so rounding can't upscale an odd-sized source by a pixel.
+ */
 export function scaleToShortEdge(w: number, h: number, short: number): [number, number] {
-  return w >= h
-    ? [roundEven((w * short) / h), roundEven(short)]
-    : [roundEven(short), roundEven((h * short) / w)];
+  const s = Math.min(w, h);
+  return [
+    Math.min(roundEven((w * short) / s), floorEven(w)),
+    Math.min(roundEven((h * short) / s), floorEven(h)),
+  ];
 }
 
 /**
