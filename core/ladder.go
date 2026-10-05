@@ -91,15 +91,22 @@ func floorEven(v int) int {
 }
 
 // needsReframe reports whether an encoder before 0.2.0 produced a wrong layout
-// for a w×h (display) source. Those encoders fit every source into the
-// ladder's boxes (refW×refH, 16:9 by default), so only a source of a different
-// aspect (portrait, square, 4:3, or rotated phone video) came out letterboxed
-// or pillarboxed.
-func needsReframe(w, h, refW, refH int) bool {
-	if w <= 0 || h <= 0 || refW <= 0 || refH <= 0 {
-		return false
+// for a w×h (display) source. Those encoders fit every source into each rung's
+// box, so any stored rung whose aspect differs from the source's came out
+// letterboxed or pillarboxed (portrait, square, 4:3, rotated phone video).
+// `stored` is the ladder recorded in the old output's metadata — not today's
+// config, which may have changed since. With no record, assume the worst.
+func needsReframe(w, h int, stored []LadderRung) bool {
+	if w <= 0 || h <= 0 || len(stored) == 0 {
+		return true
 	}
-	return math.Abs(float64(w)/float64(h)-float64(refW)/float64(refH)) > 0.02
+	src := float64(w) / float64(h)
+	for _, r := range stored {
+		if r.Width <= 0 || r.Height <= 0 || math.Abs(src-float64(r.Width)/float64(r.Height)) > 0.02 {
+			return true
+		}
+	}
+	return false
 }
 
 // versionBelow reports whether dotted version v sorts before threshold. An

@@ -349,19 +349,16 @@ func legacyOutputNeedsReencode(ctx context.Context, a pairArgs, source SourceObj
 	if err != nil {
 		return false, err
 	}
-	ref := a.cfg.Ladder[0]
-	if needsReframe(probe.Width, probe.Height, ref.Width, ref.Height) {
+	if md == nil || needsReframe(probe.Width, probe.Height, md.Ladder) {
 		return true, nil
 	}
 
 	a.logger.Info("legacy output layout is already correct; restamping", Fields{
 		"sourceKey": source.Key, "contentId": existing.ContentID, "width": probe.Width, "height": probe.Height,
 	})
-	if md != nil {
-		md.EncoderVersion = Version
-		if err := WriteMetadata(ctx, a.destClient, dest, *md); err != nil {
-			return false, err
-		}
+	md.EncoderVersion = Version
+	if err := WriteMetadata(ctx, a.destClient, dest, *md); err != nil {
+		return false, err
 	}
 	return false, restampMapping(ctx, a, existing, Version)
 }

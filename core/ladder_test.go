@@ -130,16 +130,29 @@ func TestProbeAppliesRotation(t *testing.T) {
 }
 
 func TestNeedsReframe(t *testing.T) {
+	sixteenNine := DefaultLadder
+	fourThree := []LadderRung{{"480p", 640, 480, 1400, 128}, {"720p", 960, 720, 2800, 128}}
 	cases := []struct {
-		w, h int
-		want bool
+		name   string
+		w, h   int
+		stored []LadderRung
+		want   bool
 	}{
-		{1920, 1080, false}, {1280, 720, false}, {854, 480, false},
-		{1080, 1920, true}, {432, 768, true}, {1080, 1080, true}, {1440, 1080, true},
+		{"16:9 source, 16:9 boxes", 1920, 1080, sixteenNine, false},
+		{"854x480 rounds to 16:9", 854, 480, sixteenNine, false},
+		{"portrait in 16:9 boxes", 1080, 1920, sixteenNine, true},
+		{"432x768 ceremony", 432, 768, sixteenNine, true},
+		{"square", 1080, 1080, sixteenNine, true},
+		{"4:3 in 16:9 boxes", 1440, 1080, sixteenNine, true},
+		// The decision follows the ladder the old output was encoded with: a 4:3
+		// source encoded under a 4:3 HLS_LADDER was fine, even if today's config differs.
+		{"4:3 encoded with 4:3 boxes", 1440, 1080, fourThree, false},
+		{"one stored rung of another aspect", 1920, 1080, append(slices.Clone(sixteenNine), fourThree[0]), true},
+		{"no stored ladder: assume the worst", 1920, 1080, nil, true},
 	}
 	for _, c := range cases {
-		if got := needsReframe(c.w, c.h, 640, 360); got != c.want {
-			t.Errorf("needsReframe(%d, %d) = %v, want %v", c.w, c.h, got, c.want)
+		if got := needsReframe(c.w, c.h, c.stored); got != c.want {
+			t.Errorf("%s: needsReframe = %v, want %v", c.name, got, c.want)
 		}
 	}
 }
