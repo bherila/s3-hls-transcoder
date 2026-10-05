@@ -353,6 +353,7 @@ async function processSource(args: {
         probe.width,
         probe.height,
         probe.bitrateKbps,
+        probe.videoCodec,
       );
       logger.info("effective ladder", { rungs: effectiveLadder.map((r) => r.name) });
 

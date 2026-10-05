@@ -19,6 +19,16 @@ const minVideoBitrateKbps = 200
 // re-encoding a low-bitrate source at exactly its bitrate loses further detail.
 const sourceBitrateHeadroom = 1.25
 
+// codecEfficiency is how many H.264 bits a source codec's bit is worth, for
+// comparing a source bitrate against the H.264 ladder. Codecs absent from the
+// map are not capped: without a known ratio, capping could starve the output.
+var codecEfficiency = map[string]float64{
+	"h264": 1, "mpeg4": 1, "mpeg2video": 1, "mpeg1video": 1, "h263": 1, "mjpeg": 1,
+	"vp8": 1, "theora": 1, "msmpeg4v2": 1, "msmpeg4v3": 1, "wmv1": 1, "wmv2": 1, "wmv3": 1,
+	"hevc": 2, "vp9": 2,
+	"av1": 2.5,
+}
+
 // rungShortEdge is the short edge a rung targets.
 func rungShortEdge(r LadderRung) int {
 	return min(r.Width, r.Height)
@@ -28,10 +38,10 @@ func rungShortEdge(r LadderRung) int {
 // rotation) and returns them with their exact output dimensions (even, aspect
 // preserved, no padding). Rungs whose short edge exceeds the source's are
 // skipped; when none fit, the lowest rung is used at the source's own short
-// edge rather than upscaling. When the source bitrate is known, each rung's
-// video bitrate is capped near it: spending more than the source carries only
-// encodes its artifacts.
-func computeEffectiveLadder(full []LadderRung, w, h int, sourceBitrateKbps *int) []LadderRung {
+// edge rather than upscaling. When the source bitrate and codec are known, each
+// rung's video bitrate is capped near the source's H.264-equivalent bitrate:
+// spending more than the source carries only encodes its artifacts.
+func computeEffectiveLadder(full []LadderRung, w, h int, sourceBitrateKbps *int, sourceCodec string) []LadderRung {
 	sourceShort := min(w, h)
 
 	var picked []LadderRung
@@ -53,8 +63,8 @@ func computeEffectiveLadder(full []LadderRung, w, h int, sourceBitrateKbps *int)
 			s = rungShortEdge(r)
 		}
 		r.Width, r.Height = scaleToShortEdge(w, h, s)
-		if sourceBitrateKbps != nil && *sourceBitrateKbps > 0 {
-			capKbps := max(minVideoBitrateKbps, int(math.Round(float64(*sourceBitrateKbps)*sourceBitrateHeadroom)))
+		if efficiency, known := codecEfficiency[sourceCodec]; known && sourceBitrateKbps != nil && *sourceBitrateKbps > 0 {
+			capKbps := max(minVideoBitrateKbps, int(math.Round(float64(*sourceBitrateKbps)*efficiency*sourceBitrateHeadroom)))
 			r.VideoBitrateKbps = min(r.VideoBitrateKbps, capKbps)
 		}
 		out[i] = r

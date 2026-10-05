@@ -27,43 +27,52 @@ func TestEffectiveLadderKeepsOrientationAndAspect(t *testing.T) {
 		name    string
 		w, h    int
 		bitrate *int
+		codec   string
 		want    []rendition
 	}{
-		{"landscape 1080p is unchanged", 1920, 1080, nil, []rendition{
+		{"landscape 1080p is unchanged", 1920, 1080, nil, "h264", []rendition{
 			{"360p", 640, 360, 800}, {"480p", 854, 480, 1400}, {"720p", 1280, 720, 2800}, {"1080p", 1920, 1080, 5000},
 		}},
-		{"portrait phone video gets every rung, upright", 1080, 1920, nil, []rendition{
+		{"portrait phone video gets every rung, upright", 1080, 1920, nil, "h264", []rendition{
 			{"360p", 360, 640, 800}, {"480p", 480, 854, 1400}, {"720p", 720, 1280, 2800}, {"1080p", 1080, 1920, 5000},
 		}},
 		// The wedding ceremony: a 432×768 portrait download at ~344 kbps. It used to
 		// become a single 640×360 frame (picture ~203×360 inside black bars) at 800 kbps.
-		{"low-res portrait is upright and bitrate-capped", 432, 768, kbps(344), []rendition{
+		{"low-res portrait is upright and bitrate-capped", 432, 768, kbps(344), "h264", []rendition{
 			{"360p", 360, 640, 430},
 		}},
-		{"square", 1080, 1080, nil, []rendition{
+		{"square", 1080, 1080, nil, "h264", []rendition{
 			{"360p", 360, 360, 800}, {"480p", 480, 480, 1400}, {"720p", 720, 720, 2800}, {"1080p", 1080, 1080, 5000},
 		}},
-		{"4:3 landscape", 1440, 1080, nil, []rendition{
+		{"4:3 landscape", 1440, 1080, nil, "h264", []rendition{
 			{"360p", 480, 360, 800}, {"480p", 640, 480, 1400}, {"720p", 960, 720, 2800}, {"1080p", 1440, 1080, 5000},
 		}},
-		{"below the lowest rung: no upscale", 320, 240, nil, []rendition{
+		{"below the lowest rung: no upscale", 320, 240, nil, "h264", []rendition{
 			{"360p", 320, 240, 800},
 		}},
-		{"odd sizes round to even", 1081, 1921, nil, []rendition{
+		{"odd sizes round to even", 1081, 1921, nil, "h264", []rendition{
 			{"360p", 360, 640, 800}, {"480p", 480, 852, 1400}, {"720p", 720, 1280, 2800}, {"1080p", 1080, 1920, 5000},
 		}},
-		{"odd below-ladder source rounds down, never up", 319, 239, nil, []rendition{
+		{"odd below-ladder source rounds down, never up", 319, 239, nil, "h264", []rendition{
 			{"360p", 318, 238, 800},
 		}},
-		{"rounding can't widen past the source", 641, 360, nil, []rendition{
+		{"rounding can't widen past the source", 641, 360, nil, "h264", []rendition{
 			{"360p", 640, 360, 800},
 		}},
-		{"bitrate cap never drops below the floor", 1920, 1080, kbps(50), []rendition{
+		// H.264 needs about twice HEVC's bits: a good 1.5 Mbps HEVC 1080p must not
+		// cap the H.264 1080p rung at 1.875 Mbps.
+		{"HEVC source gets an H.264-equivalent cap", 1920, 1080, kbps(1500), "hevc", []rendition{
+			{"360p", 640, 360, 800}, {"480p", 854, 480, 1400}, {"720p", 1280, 720, 2800}, {"1080p", 1920, 1080, 3750},
+		}},
+		{"unknown codec is not capped", 1920, 1080, kbps(300), "", []rendition{
+			{"360p", 640, 360, 800}, {"480p", 854, 480, 1400}, {"720p", 1280, 720, 2800}, {"1080p", 1920, 1080, 5000},
+		}},
+		{"bitrate cap never drops below the floor", 1920, 1080, kbps(50), "h264", []rendition{
 			{"360p", 640, 360, 200}, {"480p", 854, 480, 200}, {"720p", 1280, 720, 200}, {"1080p", 1920, 1080, 200},
 		}},
 	}
 	for _, c := range cases {
-		got := renditions(computeEffectiveLadder(DefaultLadder, c.w, c.h, c.bitrate))
+		got := renditions(computeEffectiveLadder(DefaultLadder, c.w, c.h, c.bitrate, c.codec))
 		if !slices.Equal(got, c.want) {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
@@ -74,7 +83,7 @@ func TestEffectiveLadderKeepsOrientationAndAspect(t *testing.T) {
 }
 
 func TestHLSArgsScaleWithoutPadding(t *testing.T) {
-	ladder := computeEffectiveLadder(DefaultLadder, 1080, 1920, nil)
+	ladder := computeEffectiveLadder(DefaultLadder, 1080, 1920, nil, "h264")
 	args := strings.Join(buildHLSArgs(TranscodeOptions{Input: "in", OutputDir: "out", Ladder: ladder, HasAudio: true}), " ")
 
 	if strings.Contains(args, "pad=") || strings.Contains(args, "force_original_aspect_ratio") {

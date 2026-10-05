@@ -4,8 +4,8 @@ import { buildHlsArgs } from "./ffmpeg/transcode.js";
 import { parseProbeOutput } from "./ffmpeg/probe.js";
 import { computeEffectiveLadder } from "./ladder.js";
 
-const dims = (w: number, h: number, kbps?: number) =>
-  computeEffectiveLadder(DEFAULT_LADDER, w, h, kbps).map((r) => [
+const dims = (w: number, h: number, kbps?: number, codec = "h264") =>
+  computeEffectiveLadder(DEFAULT_LADDER, w, h, kbps, codec).map((r) => [
     r.name,
     r.width,
     r.height,
@@ -37,6 +37,11 @@ describe("computeEffectiveLadder", () => {
 
   it("never upscales below the lowest rung", () => {
     expect(dims(320, 240)).toEqual([["360p", 320, 240, 800]]);
+  });
+
+  it("caps against the source's H.264-equivalent bitrate", () => {
+    expect(dims(1920, 1080, 1500, "hevc").at(-1)).toEqual(["1080p", 1920, 1080, 3750]);
+    expect(dims(1920, 1080, 300, "unknowncodec").at(-1)).toEqual(["1080p", 1920, 1080, 5000]);
   });
 
   it("rounds odd sizes without exceeding the source", () => {

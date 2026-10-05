@@ -259,7 +259,7 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	a.logger.Info("probed source", Fields{"sourceKey": source.Key, "width": probe.Width, "height": probe.Height, "rotation": probe.Rotation, "hasAudio": probe.HasAudio})
 
 	// 7. Effective ladder.
-	ladder := computeEffectiveLadder(a.cfg.Ladder, probe.Width, probe.Height, probe.BitrateKbps)
+	ladder := computeEffectiveLadder(a.cfg.Ladder, probe.Width, probe.Height, probe.BitrateKbps, probe.VideoCodec)
 
 	// 8. Fingerprint.
 	fp, err := FingerprintVideo(ctx, localSource, 2)

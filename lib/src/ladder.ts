@@ -12,6 +12,29 @@ const MIN_VIDEO_BITRATE_KBPS = 200;
 /** Re-encoding at exactly a low source bitrate loses further detail. */
 const SOURCE_BITRATE_HEADROOM = 1.25;
 
+/**
+ * How many H.264 bits a source codec's bit is worth. Codecs absent here are not
+ * capped: without a known ratio, capping could starve the output.
+ */
+const CODEC_EFFICIENCY: Readonly<Record<string, number>> = {
+  h264: 1,
+  mpeg4: 1,
+  mpeg2video: 1,
+  mpeg1video: 1,
+  h263: 1,
+  mjpeg: 1,
+  vp8: 1,
+  theora: 1,
+  msmpeg4v2: 1,
+  msmpeg4v3: 1,
+  wmv1: 1,
+  wmv2: 1,
+  wmv3: 1,
+  hevc: 2,
+  vp9: 2,
+  av1: 2.5,
+};
+
 const shortEdge = (r: LadderRung): number => Math.min(r.width, r.height);
 
 const roundEven = (v: number): number => Math.max(2, 2 * Math.round(v / 2));
@@ -42,7 +65,9 @@ export function computeEffectiveLadder(
   w: number,
   h: number,
   sourceBitrateKbps?: number,
+  sourceCodec?: string,
 ): LadderRung[] {
+  const efficiency = sourceCodec === undefined ? undefined : CODEC_EFFICIENCY[sourceCodec];
   const sourceShort = Math.min(w, h);
   let picked = full
     .filter((r) => shortEdge(r) <= sourceShort)
@@ -52,10 +77,10 @@ export function computeEffectiveLadder(
   return picked.map(({ rung, short }) => {
     const [width, height] = scaleToShortEdge(w, h, short);
     let videoBitrateKbps = rung.videoBitrateKbps;
-    if (sourceBitrateKbps !== undefined && sourceBitrateKbps > 0) {
+    if (efficiency !== undefined && sourceBitrateKbps !== undefined && sourceBitrateKbps > 0) {
       const cap = Math.max(
         MIN_VIDEO_BITRATE_KBPS,
-        Math.round(sourceBitrateKbps * SOURCE_BITRATE_HEADROOM),
+        Math.round(sourceBitrateKbps * efficiency * SOURCE_BITRATE_HEADROOM),
       );
       videoBitrateKbps = Math.min(videoBitrateKbps, cap);
     }
