@@ -64,3 +64,24 @@ func TestLoadConfigAllowsDistinctDestinations(t *testing.T) {
 		t.Errorf("pairs = %d, want 2", len(cfg.Pairs))
 	}
 }
+
+func TestReencodeThresholdCannotExceedEncoderVersion(t *testing.T) {
+	t.Setenv("BUCKETS_CONFIG_FILE", "")
+	t.Setenv("BUCKETS_CONFIG", `[{"source":{"bucket":"src","endpoint":"https://r2.example.com"},"dest":{"bucket":"dst","endpoint":"https://r2.example.com"},"accessKeyId":"ak","secretAccessKey":"sk"}]`)
+
+	t.Setenv("REENCODE_BELOW_VERSION", Version)
+	if cfg, err := LoadConfig(PlatformLocal); err != nil || cfg.ReencodeBelowVersion != Version {
+		t.Fatalf("threshold equal to Version should load: cfg=%+v err=%v", cfg, err)
+	}
+
+	// Restamps write Version, so a newer threshold would re-check every output forever.
+	t.Setenv("REENCODE_BELOW_VERSION", "99.0.0")
+	if _, err := LoadConfig(PlatformLocal); err == nil || !strings.Contains(err.Error(), "newer than this encoder") {
+		t.Fatalf("expected a threshold above Version to be rejected, got %v", err)
+	}
+
+	t.Setenv("REENCODE_BELOW_VERSION", "not-a-version")
+	if _, err := LoadConfig(PlatformLocal); err == nil {
+		t.Fatal("expected a malformed threshold to be rejected")
+	}
+}

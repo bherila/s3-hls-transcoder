@@ -108,7 +108,8 @@ Two things to know about the output tree:
 
 `by-id/<contentId>/metadata.json` carries the probe result and the ladder
 actually used — source width, height, duration, bitrate, and the rungs that
-survived the "no upscaling" filter. Useful for a player poster aspect ratio or a
+survived the "no upscaling" filter, each with its actual output size. Rungs keep the
+source's orientation, so a portrait video's renditions are portrait. Useful for a player poster aspect ratio or a
 duration badge without touching the source file. Read it through `hlsRoot`'s
 directory rather than assembling the key from `contentId`.
 
@@ -220,13 +221,15 @@ content.
 
 The two prefixes want opposite policies:
 
-| Prefix      | Cache                                                                                     |
-| ----------- | ----------------------------------------------------------------------------------------- |
-| `by-id/`    | Long and immutable. Paths are content-addressed, so the bytes at a key never change.      |
-| `mappings/` | Short, or revalidated. A mapping is rewritten when a source is replaced or re-transcoded. |
+| Keys                                   | Cache                                                                                                                                                       |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `by-id/` media (`*.m4s`, `init_*.mp4`) | Long and immutable. Names are unique to each encode (encoder version + random generation), so the bytes at a key never change.                              |
+| `by-id/` `*.m3u8`, `metadata.json`     | Short, or revalidated. Rewritten once when an output is re-encoded in place (`REENCODE_BELOW_VERSION`); new media is uploaded first and `master.m3u8` last. |
+| `mappings/`                            | Short, or revalidated. A mapping is rewritten when a source is replaced or re-transcoded.                                                                   |
 
 A CDN in front of `by-id/` is worth having: segment requests dominate, and they
-are perfectly cacheable.
+are perfectly cacheable. A re-encode in place never overwrites media, so a client
+holding an old playlist keeps playing the old segments, which stay in the tree.
 
 ### Access
 

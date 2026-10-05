@@ -8,13 +8,13 @@ the executable form of the [SPEC.md](../SPEC.md) client contract.
 
 ## Prerequisites
 
-| Requirement                                                | Notes                                                          |
-| ---------------------------------------------------------- | -------------------------------------------------------------- |
-| Docker (or compatible runtime)                             | Testcontainers pulls and starts `minio/minio:latest`           |
-| `ffmpeg` with `libx264`                                    | Must be on `PATH`, or set `FFMPEG_PATH`                        |
-| `ffprobe`                                                  | Usually ships alongside `ffmpeg`; set `FFPROBE_PATH` if needed |
-| `pnpm install` run at repo root                            | Fetches `testcontainers` and workspace deps                    |
-| `lib` built (`pnpm --filter @s3-hls-transcoder/lib build`) | Integration package imports from `lib/dist`                    |
+| Requirement                                                | Notes                                                                         |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Docker (or compatible runtime)                             | Testcontainers pulls and starts `cgr.dev/chainguard/minio` (pinned by digest) |
+| `ffmpeg` with `libx264`                                    | Must be on `PATH`, or set `FFMPEG_PATH`                                       |
+| `ffprobe`                                                  | Usually ships alongside `ffmpeg`; set `FFPROBE_PATH` if needed                |
+| `pnpm install` run at repo root                            | Fetches `testcontainers` and workspace deps                                   |
+| `lib` built (`pnpm --filter @s3-hls-transcoder/lib build`) | Integration package imports from `lib/dist`                                   |
 
 ## Running
 

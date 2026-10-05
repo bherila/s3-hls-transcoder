@@ -8,12 +8,20 @@ import (
 	"math"
 	"os/exec"
 	"strconv"
+	"strings"
 )
 
 // ProbeResult is the subset of ffprobe output we use.
 type ProbeResult struct {
-	Width           int
-	Height          int
+	// Width and Height are the display size: the coded size with the
+	// stream's rotation applied (phones store portrait video as rotated
+	// landscape frames).
+	Width    int
+	Height   int
+	Rotation int
+	// Anamorphic is true when the stream's pixels aren't square (SAR ≠ 1:1);
+	// Width already includes the SAR.
+	Anamorphic      bool
 	DurationSeconds float64
 	BitrateKbps     *int
 	VideoCodec      string
@@ -21,14 +29,26 @@ type ProbeResult struct {
 	HasAudio        bool
 }
 
+type ffprobeStream struct {
+	CodecType string `json:"codec_type"`
+	CodecName string `json:"codec_name"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	// SampleAspectRatio is the pixel shape, e.g. "32:27" for anamorphic
+	// 720×480 shown at 16:9; "1:1", "0:1" or absent means square pixels.
+	SampleAspectRatio string `json:"sample_aspect_ratio"`
+	SideDataList      []struct {
+		SideDataType string  `json:"side_data_type"`
+		Rotation     float64 `json:"rotation"`
+	} `json:"side_data_list"`
+	Tags struct {
+		Rotate string `json:"rotate"`
+	} `json:"tags"`
+}
+
 type ffprobeOutput struct {
-	Streams []struct {
-		CodecType string `json:"codec_type"`
-		CodecName string `json:"codec_name"`
-		Width     int    `json:"width"`
-		Height    int    `json:"height"`
-	} `json:"streams"`
-	Format struct {
+	Streams []ffprobeStream `json:"streams"`
+	Format  struct {
 		Duration string `json:"duration"`
 		BitRate  string `json:"bit_rate"`
 	} `json:"format"`
@@ -45,17 +65,17 @@ func ProbeSource(ctx context.Context, input string) (*ProbeResult, error) {
 		return nil, fmt.Errorf("ffprobe failed: %w\nstderr: %s", err, tail(errb.String(), 1000))
 	}
 
+	return parseProbeOutput(out.Bytes(), input)
+}
+
+// parseProbeOutput turns ffprobe's JSON into a ProbeResult.
+func parseProbeOutput(raw []byte, input string) (*ProbeResult, error) {
 	var data ffprobeOutput
-	if err := json.Unmarshal(out.Bytes(), &data); err != nil {
+	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, fmt.Errorf("parsing ffprobe output: %w", err)
 	}
 
-	var video, audio *struct {
-		CodecType string `json:"codec_type"`
-		CodecName string `json:"codec_name"`
-		Width     int    `json:"width"`
-		Height    int    `json:"height"`
-	}
+	var video, audio *ffprobeStream
 	for i := range data.Streams {
 		switch data.Streams[i].CodecType {
 		case "video":
@@ -72,9 +92,23 @@ func ProbeSource(ctx context.Context, input string) (*ProbeResult, error) {
 		return nil, fmt.Errorf("no video stream found in %s", input)
 	}
 
+	rotation := streamRotation(video)
+	width, height := video.Width, video.Height
+	// Non-square pixels: the display width is the coded width × SAR, which is
+	// what the rungs must be sized from (FFmpeg: DAR = iw/ih × sar).
+	anamorphic := false
+	if num, den, ok := parseRatio(video.SampleAspectRatio); ok && num != den {
+		width = int(math.Round(float64(width) * float64(num) / float64(den)))
+		anamorphic = true
+	}
+	if rotation%180 != 0 {
+		width, height = height, width
+	}
 	res := &ProbeResult{
-		Width:      video.Width,
-		Height:     video.Height,
+		Width:      width,
+		Height:     height,
+		Rotation:   rotation,
+		Anamorphic: anamorphic,
 		VideoCodec: video.CodecName,
 		HasAudio:   audio != nil,
 	}
@@ -93,4 +127,42 @@ func ProbeSource(ctx context.Context, input string) (*ProbeResult, error) {
 		res.AudioCodec = audio.CodecName
 	}
 	return res, nil
+}
+
+// streamRotation returns the stream's display rotation in degrees, normalized
+// to 0, 90, 180 or 270. Newer ffprobe reports it as Display Matrix side data,
+// older versions as a "rotate" tag.
+func streamRotation(s *ffprobeStream) int {
+	deg := 0.0
+	found := false
+	for _, sd := range s.SideDataList {
+		if sd.SideDataType == "Display Matrix" {
+			deg, found = sd.Rotation, true
+			break
+		}
+	}
+	if !found && s.Tags.Rotate != "" {
+		if v, err := strconv.ParseFloat(s.Tags.Rotate, 64); err == nil {
+			deg = v
+		}
+	}
+	r := int(math.Round(deg/90)) * 90 % 360
+	if r < 0 {
+		r += 360
+	}
+	return r
+}
+
+// parseRatio parses "num:den" with both parts positive.
+func parseRatio(s string) (int, int, bool) {
+	n, d, found := strings.Cut(s, ":")
+	if !found {
+		return 0, 0, false
+	}
+	num, err1 := strconv.Atoi(n)
+	den, err2 := strconv.Atoi(d)
+	if err1 != nil || err2 != nil || num <= 0 || den <= 0 {
+		return 0, 0, false
+	}
+	return num, den, true
 }

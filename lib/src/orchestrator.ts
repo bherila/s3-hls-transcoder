@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { BucketPair, Config, LadderRung } from "./config.js";
+import type { BucketPair, Config } from "./config.js";
 import { runCleanupPass } from "./cleanup.js";
 import { byIdPrefix, formatContentId, masterPlaylistKey } from "./contentId.js";
 import { transcodedOutputExists } from "./dest.js";
@@ -27,6 +27,7 @@ import { writeMetadata, type OutputMetadata } from "./metadata.js";
 import { createS3Client } from "./s3.js";
 import { scanSource, type SourceObject, type ScanOptions } from "./scanner.js";
 import { uploadDirectory } from "./uploader.js";
+import { computeEffectiveLadder } from "./ladder.js";
 import { VERSION } from "./version.js";
 
 export interface OrchestratorOptions {
@@ -347,7 +348,13 @@ async function processSource(args: {
       ensureBudgetRemaining(budgetEndsAt, "probing source");
 
       // 6. Effective ladder.
-      const effectiveLadder = computeEffectiveLadder(config.ladder, probe.width, probe.height);
+      const effectiveLadder = computeEffectiveLadder(
+        config.ladder,
+        probe.width,
+        probe.height,
+        probe.bitrateKbps,
+        probe.videoCodec,
+      );
       logger.info("effective ladder", { rungs: effectiveLadder.map((r) => r.name) });
 
       // 7. Perceptual fingerprint.
@@ -517,16 +524,6 @@ function buildMapping(source: SourceObject, pair: BucketPair, contentId: string)
     encodedAt: new Date().toISOString(),
     encoderVersion: VERSION,
   };
-}
-
-function computeEffectiveLadder(
-  full: readonly LadderRung[],
-  sourceWidth: number,
-  sourceHeight: number,
-): LadderRung[] {
-  const filtered = full.filter((r) => r.width <= sourceWidth && r.height <= sourceHeight);
-  if (filtered.length > 0) return filtered;
-  return [full[0]!];
 }
 
 function isHigherQuality(probe: ProbeResult, stored: FingerprintIndexEntry): boolean {

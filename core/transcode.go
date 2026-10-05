@@ -3,11 +3,14 @@ package core
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // TranscodeOptions configures an HLS ABR transcode.
@@ -18,6 +21,9 @@ type TranscodeOptions struct {
 	HasAudio       bool
 	SegmentSeconds int // default 6
 	GOPSize        int // default 48
+	// MediaTag names this encode's segment and init objects. Empty means a
+	// fresh newMediaTag(); set it only to make arguments deterministic in tests.
+	MediaTag string
 }
 
 // TranscodeToHLS produces an HLS ABR ladder (fMP4/CMAF) under OutputDir:
@@ -35,6 +41,13 @@ func TranscodeToHLS(ctx context.Context, opts TranscodeOptions) error {
 		}
 	}
 
+	if opts.MediaTag == "" {
+		tag, err := newMediaTag()
+		if err != nil {
+			return err
+		}
+		opts.MediaTag = tag
+	}
 	cmd := exec.CommandContext(ctx, findFfmpeg(), buildHLSArgs(opts)...)
 	var errb bytes.Buffer
 	cmd.Stderr = &errb
@@ -55,7 +68,9 @@ func buildHLSArgs(opts TranscodeOptions) []string {
 		gopSize = 48
 	}
 
-	// Filter graph: split video N ways, scale + pad each.
+	// Filter graph: split video N ways and scale each to its rung's exact output
+	// size (computeEffectiveLadder keeps the source aspect, so no padding).
+	// ffmpeg auto-rotates on decode, so the frames are already upright.
 	splitOutputs := ""
 	for i := range ladder {
 		splitOutputs += fmt.Sprintf("[v%d]", i)
@@ -67,8 +82,8 @@ func buildHLSArgs(opts TranscodeOptions) []string {
 			scaleClauses += ";"
 		}
 		scaleClauses += fmt.Sprintf(
-			"[v%d]scale=w=%d:h=%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2[s%d]",
-			i, rung.Width, rung.Height, rung.Width, rung.Height, i)
+			"[v%d]scale=w=%d:h=%d,setsar=1[s%d]",
+			i, rung.Width, rung.Height, i)
 	}
 	filterComplex := splitClause + ";" + scaleClauses
 
@@ -118,10 +133,29 @@ func buildHLSArgs(opts TranscodeOptions) []string {
 		"-hls_playlist_type", "vod",
 		"-hls_segment_type", "fmp4",
 		"-hls_flags", "independent_segments",
-		"-hls_segment_filename", filepath.Join(opts.OutputDir, "%v", "seg_%05d.m4s"),
+		// Media names are unique to this encode (see newMediaTag), so a
+		// re-encode in place adds segment/init objects and never overwrites
+		// ones that cached playlists still reference.
+		"-hls_segment_filename", filepath.Join(opts.OutputDir, "%v", "seg_"+opts.MediaTag+"_%05d.m4s"),
+		// ffmpeg requires %v in a custom init name once there are several
+		// renditions; it expands to the rendition name, in that rendition's dir.
+		"-hls_fmp4_init_filename", "init_"+opts.MediaTag+"_%v.mp4",
 		"-master_pl_name", "master.m3u8",
 		"-var_stream_map", varStreamMap,
 		filepath.Join(opts.OutputDir, "%v", "index.m3u8"),
 	)
 	return args
+}
+
+// newMediaTag returns a name for one encode's media objects: the encoder
+// version plus a random generation ("0-2-0-3fa9c1e2"). The generation is what
+// keeps a retried re-encode (one whose master was published but a later
+// metadata write failed) from overwriting the objects that master references;
+// playlists carry the names, so nothing else needs to remember it.
+func newMediaTag() (string, error) {
+	gen := make([]byte, 4)
+	if _, err := rand.Read(gen); err != nil {
+		return "", err
+	}
+	return strings.ReplaceAll(Version, ".", "-") + "-" + hex.EncodeToString(gen), nil
 }

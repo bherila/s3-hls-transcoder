@@ -1,8 +1,10 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -61,4 +63,16 @@ func IsPreconditionFailed(err error) bool {
 		return true
 	}
 	return httpStatusCode(err) == http.StatusPreconditionFailed
+}
+
+// PresignGet returns a short-lived GET URL for an object, so ffprobe can read
+// just the headers it needs instead of downloading the whole file.
+func PresignGet(ctx context.Context, client *s3.Client, bucket, key string, ttl time.Duration) (string, error) {
+	req, err := s3.NewPresignClient(client).PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", err
+	}
+	return req.URL, nil
 }

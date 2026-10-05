@@ -39,20 +39,18 @@ export async function transcodeToHls(opts: TranscodeOptions): Promise<void> {
   await runProcess(findFfmpeg(), args, { timeoutMs: opts.timeoutMs });
 }
 
-function buildHlsArgs(opts: TranscodeOptions): string[] {
+export function buildHlsArgs(opts: TranscodeOptions): string[] {
   const { input, outputDir, ladder, hasAudio } = opts;
   const segmentSeconds = opts.segmentSeconds ?? 6;
   const gopSize = opts.gopSize ?? 48;
 
-  // Filter graph: split video N ways, scale each.
+  // Filter graph: split video N ways and scale each to its rung's exact output
+  // size (computeEffectiveLadder keeps the source aspect, so no padding).
+  // ffmpeg auto-rotates on decode, so the frames are already upright.
   const splitOutputs = ladder.map((_, i) => `[v${i}]`).join("");
   const splitClause = `[0:v]split=${ladder.length}${splitOutputs}`;
   const scaleClauses = ladder
-    .map(
-      (rung, i) =>
-        `[v${i}]scale=w=${rung.width}:h=${rung.height}:force_original_aspect_ratio=decrease,` +
-        `pad=${rung.width}:${rung.height}:(ow-iw)/2:(oh-ih)/2[s${i}]`,
-    )
+    .map((rung, i) => `[v${i}]scale=w=${rung.width}:h=${rung.height},setsar=1[s${i}]`)
     .join(";");
   const filterComplex = `${splitClause};${scaleClauses}`;
 
