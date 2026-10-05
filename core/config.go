@@ -359,6 +359,13 @@ func parseLadder(raw string) ([]LadderRung, error) {
 		if r.Name == "" || r.Width == 0 || r.Height == 0 || r.VideoBitrateKbps == 0 || r.AudioBitrateKbps == 0 {
 			return nil, fmt.Errorf("HLS_LADDER rung is malformed: %+v", r)
 		}
+		// The name becomes the rendition's path in every published playlist;
+		// validateHLSTree (and consumers' playback proxies) accept only these
+		// characters, so reject other names at startup rather than after
+		// every encode.
+		if !safeHLSPath.MatchString(r.Name) || strings.Contains("/"+r.Name+"/", "/../") || strings.Contains("/"+r.Name+"/", "/./") {
+			return nil, fmt.Errorf("HLS_LADDER rung name %q must be letters, digits, '.', '_', '-' and '/' segments", r.Name)
+		}
 	}
 	return rungs, nil
 }

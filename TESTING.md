@@ -32,18 +32,18 @@ S3 error stubs use `S3ServiceException` directly — construct them with `name`,
 
 ## What is and isn't covered
 
-| Area                                    | Covered | Notes                                              |
-| --------------------------------------- | ------- | -------------------------------------------------- |
-| Lock acquire / stale takeover / release | Yes     | `lock.s3mock.test.ts`                              |
-| Mapping read / write / dedup check      | Yes     | `mapping.s3mock.test.ts`                           |
-| Content ID (SHA-256 scheme prefix)      | Yes     | `contentId.test.ts`                                |
-| Fingerprint math + serialization        | Yes     | `fingerprint.test.ts`                              |
-| Config parsing + overlap validation     | Yes     | `config.test.ts`                                   |
-| Scanner (S3 list)                       | Yes     | `scanner.test.ts`                                  |
-| Uploader                                | Yes     | `uploader.test.ts`                                 |
-| ffmpeg transcode / probe / signature    | **No**  | Requires real binary; covered by integration tests |
-| Full orchestrator pipeline              | **Yes** | `integration/` — see below                         |
-| Real S3 / R2 / MinIO round-trip         | **Yes** | `integration/` — see below                         |
+| Area                                    | Covered | Notes                                                                                                                                                                                                     |
+| --------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lock acquire / stale takeover / release | Yes     | `lock.s3mock.test.ts`                                                                                                                                                                                     |
+| Mapping read / write / dedup check      | Yes     | `mapping.s3mock.test.ts`                                                                                                                                                                                  |
+| Content ID (SHA-256 scheme prefix)      | Yes     | `contentId.test.ts`                                                                                                                                                                                       |
+| Fingerprint math + serialization        | Yes     | `fingerprint.test.ts`                                                                                                                                                                                     |
+| Config parsing + overlap validation     | Yes     | `config.test.ts`                                                                                                                                                                                          |
+| Scanner (S3 list)                       | Yes     | `scanner.test.ts`                                                                                                                                                                                         |
+| Uploader                                | Yes     | `uploader.test.ts`                                                                                                                                                                                        |
+| ffmpeg transcode / probe / signature    | Partly  | Go: `core/ffmpeg_test.go` transcodes real one- and multi-rendition sources and validates the published tree (needs ffmpeg; `REQUIRE_FFMPEG=1` makes its absence fatal, as CI does). TS: integration tests |
+| Full orchestrator pipeline              | **Yes** | `integration/` — see below                                                                                                                                                                                |
+| Real S3 / R2 / MinIO round-trip         | **Yes** | `integration/` — see below                                                                                                                                                                                |
 
 ## Integration tests
 
@@ -78,7 +78,7 @@ Not run by `pnpm test` — without `INTEGRATION=1` the suites skip, so the stand
 
 | Job           | Runs                                                                                                  |
 | ------------- | ----------------------------------------------------------------------------------------------------- |
-| `build`       | `gofmt`, `go vet`, `go build`, `go test ./... -race`                                                  |
+| `build`       | `gofmt`, `go vet`, `go build`, installs ffmpeg, `REQUIRE_FFMPEG=1 go test ./... -race`                |
 | `node`        | `pnpm format:check`, `pnpm lint`, `pnpm build`, `pnpm typecheck`, `pnpm test` (unit suites)           |
 | `integration` | Installs ffmpeg, builds `lib`, then `INTEGRATION=1 pnpm --filter @s3-hls-transcoder/integration test` |
 
