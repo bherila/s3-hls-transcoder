@@ -89,6 +89,12 @@ func TestValidateHLSTreeRejectsUnpublishableOutput(t *testing.T) {
 		"no renditions": {
 			"master.m3u8": "#EXTM3U\n",
 		},
+		// A zero-frame encode: an init map but no segment to play.
+		"init but no segments": {
+			"master.m3u8":     master,
+			"360p/index.m3u8": "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-ENDLIST\n",
+			"360p/init.mp4":   "i",
+		},
 	}
 	for name, files := range cases {
 		if err := validateHLSTree(writeTree(t, files)); err == nil {

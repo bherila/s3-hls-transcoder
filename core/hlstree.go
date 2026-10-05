@@ -108,12 +108,14 @@ func validateHLSTree(dir string) error {
 		return fmt.Errorf("master.m3u8 references no renditions")
 	}
 	for _, v := range variants {
-		segments, attrs, err := playlistRefs(dir, v)
+		// Segments are the bare URI lines; an EXT-X-MAP init alone (e.g. a
+		// zero-frame encode) is not playable.
+		segments, _, err := playlistRefs(dir, v)
 		if err != nil {
 			return err
 		}
-		if len(segments)+len(attrs) == 0 {
-			return fmt.Errorf("%s references no media", v)
+		if len(segments) == 0 {
+			return fmt.Errorf("%s references no segments", v)
 		}
 	}
 	return nil
