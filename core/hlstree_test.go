@@ -105,3 +105,23 @@ func TestVersionHLSTreeRejectsUnsafeTags(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionHLSTreeFollowsNestedRenditions(t *testing.T) {
+	// HLS_LADDER rung names may contain "/", which nests the rendition directory.
+	dir := writeTree(t, map[string]string{
+		"master.m3u8":               "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nmobile/360p/index.m3u8\n",
+		"mobile/360p/index.m3u8":    rungPlaylist,
+		"mobile/360p/init.mp4":      "i",
+		"mobile/360p/seg_00000.m4s": "s0",
+		"mobile/360p/seg_00001.m4s": "s1",
+	})
+	if err := versionHLSTree(dir, "0-2-0-abcd1234"); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateHLSTree(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "mobile/360p/init_0-2-0-abcd1234.mp4")); err != nil {
+		t.Error(err)
+	}
+}

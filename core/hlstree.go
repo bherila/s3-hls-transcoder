@@ -27,29 +27,28 @@ var (
 	uriAttr     = regexp.MustCompile(`URI="([^"]*)"`)
 )
 
-// versionHLSTree renames every rendition's init (init.mp4 or init_N.mp4) and
-// seg_NNNNN.m4s under dir to init_<tag>.mp4 and seg_<tag>_NNNNN.m4s, rewriting
-// each rendition's index.m3u8 to the new names.
+// versionHLSTree renames the init (init.mp4 or init_N.mp4) and seg_NNNNN.m4s
+// of every rendition master.m3u8 names to init_<tag>.mp4 and
+// seg_<tag>_NNNNN.m4s, rewriting each rendition playlist to the new names.
 func versionHLSTree(dir, tag string) error {
 	if !safeHLSPath.MatchString(tag) || strings.Contains(tag, "/") {
 		return fmt.Errorf("unsafe media tag %q", tag)
 	}
-	entries, err := os.ReadDir(dir)
+	// Follow the renditions the master playlist names: an HLS_LADDER rung
+	// name may contain "/" (e.g. "mobile/360p"), nesting its directory.
+	variants, _, err := playlistRefs(dir, "master.m3u8")
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if err := versionRendition(filepath.Join(dir, e.Name()), tag); err != nil {
-			return fmt.Errorf("rendition %s: %w", e.Name(), err)
+	for _, v := range variants {
+		if err := versionRendition(filepath.Join(dir, filepath.FromSlash(path.Dir(v))), path.Base(v), tag); err != nil {
+			return fmt.Errorf("rendition %s: %w", v, err)
 		}
 	}
 	return nil
 }
 
-func versionRendition(dir, tag string) error {
+func versionRendition(dir, playlistName, tag string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
@@ -70,7 +69,7 @@ func versionRendition(dir, tag string) error {
 		}
 	}
 
-	playlist := filepath.Join(dir, "index.m3u8")
+	playlist := filepath.Join(dir, playlistName)
 	raw, err := os.ReadFile(playlist)
 	if err != nil {
 		return err
@@ -101,7 +100,7 @@ func versionRendition(dir, tag string) error {
 // reference safe relative paths to files that exist in the tree, so a bad
 // ffmpeg layout fails the encode instead of being published.
 func validateHLSTree(dir string) error {
-	variants, err := playlistRefs(dir, "master.m3u8")
+	variants, _, err := playlistRefs(dir, "master.m3u8")
 	if err != nil {
 		return err
 	}
@@ -109,38 +108,37 @@ func validateHLSTree(dir string) error {
 		return fmt.Errorf("master.m3u8 references no renditions")
 	}
 	for _, v := range variants {
-		media, err := playlistRefs(dir, v)
+		segments, attrs, err := playlistRefs(dir, v)
 		if err != nil {
 			return err
 		}
-		if len(media) == 0 {
+		if len(segments)+len(attrs) == 0 {
 			return fmt.Errorf("%s references no media", v)
 		}
 	}
 	return nil
 }
 
-// playlistRefs returns the tree-relative paths a playlist references (URI
-// attributes and bare URI lines), checking each is safe and exists.
-func playlistRefs(dir, rel string) ([]string, error) {
+// playlistRefs returns the tree-relative paths a playlist references — bare
+// URI lines (renditions in a master, segments in a rendition playlist) and URI
+// attributes (e.g. EXT-X-MAP) separately — checking each is safe and exists.
+func playlistRefs(dir, rel string) (lines, attrs []string, err error) {
 	f, err := os.Open(filepath.Join(dir, filepath.FromSlash(rel)))
 	if err != nil {
-		return nil, fmt.Errorf("playlist %s: %w", rel, err)
+		return nil, nil, fmt.Errorf("playlist %s: %w", rel, err)
 	}
 	defer f.Close()
 
 	base := path.Dir(rel)
-	var refs []string
-	add := func(uri string) error {
+	check := func(uri string) (string, error) {
 		target := path.Clean(path.Join(base, uri))
 		if !safeHLSPath.MatchString(uri) || strings.HasPrefix(target, "../") || target == ".." {
-			return fmt.Errorf("%s references unsafe path %q", rel, uri)
+			return "", fmt.Errorf("%s references unsafe path %q", rel, uri)
 		}
 		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(target))); err != nil {
-			return fmt.Errorf("%s references missing %q", rel, uri)
+			return "", fmt.Errorf("%s references missing %q", rel, uri)
 		}
-		refs = append(refs, target)
-		return nil
+		return target, nil
 	}
 
 	sc := bufio.NewScanner(f)
@@ -150,15 +148,19 @@ func playlistRefs(dir, rel string) ([]string, error) {
 		case line == "":
 		case strings.HasPrefix(line, "#"):
 			for _, m := range uriAttr.FindAllStringSubmatch(line, -1) {
-				if err := add(m[1]); err != nil {
-					return nil, err
+				target, err := check(m[1])
+				if err != nil {
+					return nil, nil, err
 				}
+				attrs = append(attrs, target)
 			}
 		default:
-			if err := add(line); err != nil {
-				return nil, err
+			target, err := check(line)
+			if err != nil {
+				return nil, nil, err
 			}
+			lines = append(lines, target)
 		}
 	}
-	return refs, sc.Err()
+	return lines, attrs, sc.Err()
 }
