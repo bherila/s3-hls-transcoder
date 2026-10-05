@@ -85,3 +85,20 @@ func TestReencodeThresholdCannotExceedEncoderVersion(t *testing.T) {
 		t.Fatal("expected a malformed threshold to be rejected")
 	}
 }
+
+func TestLadderRungNamesMustBePublishable(t *testing.T) {
+	rung := func(name string) string {
+		return `[{"name":"` + name + `","width":640,"height":360,"videoBitrateKbps":800,"audioBitrateKbps":96}]`
+	}
+	for _, ok := range []string{"360p", "mobile/360p", "low_360-v2.1"} {
+		if _, err := parseLadder(rung(ok)); err != nil {
+			t.Errorf("%q should be accepted: %v", ok, err)
+		}
+	}
+	// Accepted before, but every encode would then fail validation (or a proxy).
+	for _, bad := range []string{"mobile~360p", "360 p", "../360p", "a/./b", "/360p", "360p%v"} {
+		if _, err := parseLadder(rung(bad)); err == nil {
+			t.Errorf("%q should be rejected at startup", bad)
+		}
+	}
+}
