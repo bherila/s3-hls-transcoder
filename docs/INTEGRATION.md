@@ -221,13 +221,15 @@ content.
 
 The two prefixes want opposite policies:
 
-| Prefix      | Cache                                                                                     |
-| ----------- | ----------------------------------------------------------------------------------------- |
-| `by-id/`    | Long and immutable. Paths are content-addressed, so the bytes at a key never change.      |
-| `mappings/` | Short, or revalidated. A mapping is rewritten when a source is replaced or re-transcoded. |
+| Keys                                   | Cache                                                                                                                                                       |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `by-id/` media (`*.m4s`, `init_*.mp4`) | Long and immutable. Names carry the encoder version, so the bytes at a key never change.                                                                    |
+| `by-id/` `*.m3u8`, `metadata.json`     | Short, or revalidated. Rewritten once when an output is re-encoded in place (`REENCODE_BELOW_VERSION`); new media is uploaded first and `master.m3u8` last. |
+| `mappings/`                            | Short, or revalidated. A mapping is rewritten when a source is replaced or re-transcoded.                                                                   |
 
 A CDN in front of `by-id/` is worth having: segment requests dominate, and they
-are perfectly cacheable.
+are perfectly cacheable. A re-encode in place never overwrites media, so a client
+holding an old playlist keeps playing the old segments, which stay in the tree.
 
 ### Access
 

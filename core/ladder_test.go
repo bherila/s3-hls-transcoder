@@ -171,3 +171,32 @@ func TestVersionBelow(t *testing.T) {
 		}
 	}
 }
+
+func TestMediaNamesCarryTheEncoderVersion(t *testing.T) {
+	// Several renditions: ffmpeg rejects a custom init name without %v.
+	args := buildHLSArgs(TranscodeOptions{Input: "in", OutputDir: "out", Ladder: DefaultLadder})
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"seg_" + mediaTag() + "_%05d.m4s", "-hls_fmp4_init_filename init_" + mediaTag() + "_%v.mp4"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("args missing %q:\n%s", want, joined)
+		}
+	}
+	if mediaTag() != strings.ReplaceAll(Version, ".", "-") || strings.Contains(mediaTag(), ".") {
+		t.Errorf("mediaTag() = %q", mediaTag())
+	}
+}
+
+func TestUploadTierPublishesMasterLast(t *testing.T) {
+	cases := map[string]int{
+		"360p/seg_0-2-0_00000.m4s": 0,
+		"360p/init_0-2-0_360p.mp4": 0,
+		"360p/index.m3u8":          1,
+		"1080p/index.m3u8":         1,
+		"master.m3u8":              2,
+	}
+	for rel, want := range cases {
+		if got := uploadTier(rel); got != want {
+			t.Errorf("uploadTier(%q) = %d, want %d", rel, got, want)
+		}
+	}
+}

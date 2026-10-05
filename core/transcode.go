@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // TranscodeOptions configures an HLS ABR transcode.
@@ -120,10 +121,21 @@ func buildHLSArgs(opts TranscodeOptions) []string {
 		"-hls_playlist_type", "vod",
 		"-hls_segment_type", "fmp4",
 		"-hls_flags", "independent_segments",
-		"-hls_segment_filename", filepath.Join(opts.OutputDir, "%v", "seg_%05d.m4s"),
+		// Media names carry the encoder version, so a re-encode in place
+		// (REENCODE_BELOW_VERSION) adds new segment/init objects instead of
+		// overwriting ones that cached playlists still reference.
+		"-hls_segment_filename", filepath.Join(opts.OutputDir, "%v", "seg_"+mediaTag()+"_%05d.m4s"),
+		// ffmpeg requires %v in a custom init name once there are several
+		// renditions; it expands to the rendition name, in that rendition's dir.
+		"-hls_fmp4_init_filename", "init_"+mediaTag()+"_%v.mp4",
 		"-master_pl_name", "master.m3u8",
 		"-var_stream_map", varStreamMap,
 		filepath.Join(opts.OutputDir, "%v", "index.m3u8"),
 	)
 	return args
+}
+
+// mediaTag is the encoder version in a form safe for object names ("0-2-0").
+func mediaTag() string {
+	return strings.ReplaceAll(Version, ".", "-")
 }

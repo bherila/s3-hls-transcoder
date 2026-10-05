@@ -34,26 +34,60 @@ func ContentTypeFor(filename string) string {
 	}
 }
 
+// uploadTier orders an HLS tree's uploads so a reader never sees a playlist
+// before what it references: media first, then each rendition's playlist,
+// then master.m3u8. A re-encode in place therefore switches over only when
+// the new master lands, and an interrupted upload leaves the old one live.
+func uploadTier(rel string) int {
+	rel = filepath.ToSlash(rel)
+	switch {
+	case rel == "master.m3u8":
+		return 2
+	case strings.HasSuffix(rel, ".m3u8"):
+		return 1
+	default:
+		return 0
+	}
+}
+
 // UploadDirectory uploads every file under localDir to bucket under keyPrefix,
-// preserving relative paths, with HLS-aware content types. Large segments use
+// preserving relative paths, with HLS-aware content types, in uploadTier
+// order (each tier completes before the next starts). Large segments use
 // multipart automatically via the upload manager.
 func UploadDirectory(ctx context.Context, client *s3.Client, bucket, keyPrefix, localDir string, concurrency int) ([]string, error) {
-	if concurrency <= 0 {
-		concurrency = 8
-	}
-	var files []string
+	var tiers [3][]string
 	if err := filepath.WalkDir(localDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if !d.IsDir() {
-			files = append(files, path)
+			rel, err := filepath.Rel(localDir, path)
+			if err != nil {
+				return err
+			}
+			tiers[uploadTier(rel)] = append(tiers[uploadTier(rel)], path)
 		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 
+	var keys []string
+	for _, files := range tiers {
+		tierKeys, err := uploadFiles(ctx, client, bucket, keyPrefix, localDir, files, concurrency)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, tierKeys...)
+	}
+	return keys, nil
+}
+
+// uploadFiles uploads files (paths under localDir) concurrently.
+func uploadFiles(ctx context.Context, client *s3.Client, bucket, keyPrefix, localDir string, files []string, concurrency int) ([]string, error) {
+	if concurrency <= 0 {
+		concurrency = 8
+	}
 	uploader := manager.NewUploader(client)
 	keys := make([]string, len(files))
 
