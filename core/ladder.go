@@ -118,6 +118,13 @@ func legacyLayoutWrong(p *ProbeResult, stored []LadderRung) bool {
 	return p.Anamorphic || needsReframe(p.Width, p.Height, stored)
 }
 
+// reencodeStillApplies reports whether a re-encode decided from a mapping
+// still targets the bytes just downloaded: the source may have been replaced
+// between the legacy check and the download.
+func reencodeStillApplies(mapped SourceMapping, downloadedContentID string) bool {
+	return mapped.ContentID == downloadedContentID
+}
+
 // versionBelow reports whether dotted version v sorts before threshold. An
 // empty or malformed v counts as oldest.
 func versionBelow(v, threshold string) bool {

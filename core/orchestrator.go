@@ -222,6 +222,15 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 		a.logger.Warn("downloaded size differs from listing", Fields{"sourceKey": source.Key, "listed": source.Size, "downloaded": dl.Bytes})
 	}
 	contentID := FormatContentID(SchemeSHA256, dl.SHA256)
+	if reencode && !reencodeStillApplies(*existing, contentID) {
+		// The source was replaced after the legacy check: the migration
+		// decision was about other bytes, so process these normally
+		// (including byte-hash dedup) instead of re-encoding over a tree.
+		a.logger.Info("source changed since legacy check; processing normally", Fields{
+			"sourceKey": source.Key, "mappedContentId": existing.ContentID, "contentId": contentID,
+		})
+		reencode = false
+	}
 
 	// 4. Byte-hash dedup.
 	exists, err := TranscodedOutputExists(ctx, a.destClient, dest, contentID)

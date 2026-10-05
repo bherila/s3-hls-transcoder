@@ -220,3 +220,15 @@ func TestLegacyLayoutWrongReencodesAnamorphicSources(t *testing.T) {
 		t.Errorf("square-pixel 16:9 source must be restamped, not re-encoded: %+v", square)
 	}
 }
+
+func TestReencodeOnlyTargetsTheMappedContent(t *testing.T) {
+	mapped := SourceMapping{SourceKey: "videos/a.mp4", ContentID: "sha256:aaa"}
+	if !reencodeStillApplies(mapped, "sha256:aaa") {
+		t.Error("same bytes: the re-encode should proceed")
+	}
+	// Replaced between the legacy probe and the download: must not re-encode
+	// over (possibly another source's live) tree for the new bytes.
+	if reencodeStillApplies(mapped, "sha256:bbb") {
+		t.Error("changed bytes: the re-encode must be dropped")
+	}
+}
