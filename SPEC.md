@@ -98,13 +98,13 @@ Strict sequence. Steps numbered for cross-reference; side effects called out exp
       - Held by live worker (within `lockTtlSeconds`) → exit cleanly, return.
       - Held but stale (past TTL) → DELETE and re-PUT atomically; if a third worker beat us, return.
    2. **Scan source bucket** with pagination. For each video key, in listing order:
-      1. **Mapping cache check.** GET `<dest>/mappings/<source-key>.json`. If it exists with matching `sourceEtag` AND `sourceSize` → skip (counted as `cached`).
+      1. **Mapping cache check.** GET `<dest>/mappings/<source-key>.json`. If it exists with matching `sourceEtag` AND `sourceSize` → skip (counted as `cached`) — unless `REENCODE_BELOW_VERSION` is set and the mapping's `encoderVersion` is older, in which case the source is probed via a presigned URL and either restamped (layout already correct) or re-encoded (step 3 is then skipped for it). See PLAN.md "Re-encoding outputs from older encoders". _(Go worker only.)_
       2. **Stream-and-hash.** Single GET of source bytes; in parallel compute SHA-256 of bytes and write to a temp file.
       3. **Byte-hash dedup.** If `<dest>/by-id/sha256:<hash>/master.m3u8` exists → write mapping pointing at it (counted as `deduped`); skip transcode.
       4. **Acquire per-video lease** at `<dest>/by-id/sha256:<hash>/.processing` via conditional PUT.
          - Held → counted as `busy`, skip this video.
-      5. **Probe.** Run `ffprobe` to extract resolution, duration, audio presence, bitrate.
-      6. **Compute effective ladder.** Filter the configured ladder to rungs at or below source resolution. No upscaling.
+      5. **Probe.** Run `ffprobe` to extract display resolution (rotation applied), duration, audio presence, bitrate.
+      6. **Compute effective ladder.** Keep rungs whose short edge is at or below the source's short edge, sized to the source's aspect ratio and orientation, with video bitrate capped near the source's. No upscaling, no padding.
       7. **Fingerprint** the source via dHash on keyframes sampled at `fps=1/2`, 9×8 grayscale.
       8. **Perceptual match search.** Read `<dest>/fingerprints/index.json` and compare against entries with comparable frame count (within 0.7 ratio prefilter). Similarity = 1 − meanHammingDist / 64.
          - Best similarity ≥ `PERCEPTUAL_THRESHOLD` (default 0.95): log the candidate match, its quality comparison, and `actedUpon: false`; continue without reusing, repointing, or deleting the matched content.
@@ -198,10 +198,12 @@ Budget < runtime < lock-TTL is invariant. Setting multipliers that violate this 
 ## 9. ABR ladder rules
 
 - Default ladder: 360p / 480p / 720p / 1080p, H.264 Main + AAC.
-- **No upscaling.** Rungs above source resolution are dropped from the effective ladder.
+- **Short-edge rungs.** A rung's name is its short edge; its output keeps the source's display aspect ratio and orientation (no letterbox/pillarbox padding). Output sides are rounded to even numbers.
+- **No upscaling.** Rungs whose short edge exceeds the source's are dropped; a source smaller than the lowest rung gets that rung at its own size.
+- **Bitrate cap.** Each rung's video bitrate is `min(rung, max(200, round(1.25 × source kbps)))` when the source bitrate is known.
 - If the source has no audio, audio rungs are omitted from the ffmpeg variant map (the master playlist still lists the variants without `AUDIO`).
 - Codec is fixed at v1: H.264 + AAC. HEVC/AV1 are out of scope (see [FUTURE.md](./FUTURE.md)).
-- Override the ladder via the `HLS_LADDER` env var (JSON array of `{name, width, height, videoBitrateKbps, audioBitrateKbps}`).
+- Override the ladder via the `HLS_LADDER` env var (JSON array of `{name, width, height, videoBitrateKbps, audioBitrateKbps}`). `width`/`height` are a landscape reference box; only their minimum (the short edge) selects and sizes the rung. `metadata.json`'s `ladder` records the actual output size of each rung.
 
 ---
 

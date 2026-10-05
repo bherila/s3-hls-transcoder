@@ -176,9 +176,21 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	if err != nil {
 		return 0, err
 	}
+	reencode := false
 	if IsCachedMapping(existing, source.ETag, source.Size) {
-		a.logger.Debug("mapping cache hit", Fields{"sourceKey": source.Key})
-		return outcomeCached, nil
+		if a.cfg.ReencodeBelowVersion == "" || !versionBelow(existing.EncoderVersion, a.cfg.ReencodeBelowVersion) {
+			a.logger.Debug("mapping cache hit", Fields{"sourceKey": source.Key})
+			return outcomeCached, nil
+		}
+		stale, err := legacyOutputNeedsReencode(ctx, a, source, *existing)
+		if err != nil {
+			return 0, err
+		}
+		if !stale {
+			return outcomeCached, nil
+		}
+		a.logger.Info("re-encoding legacy output", Fields{"sourceKey": source.Key, "contentId": existing.ContentID, "encoderVersion": existing.EncoderVersion})
+		reencode = true
 	}
 
 	// 2. Tombstone check — skip a deterministically-broken source version.
@@ -216,7 +228,7 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	if err != nil {
 		return 0, err
 	}
-	if exists {
+	if exists && !reencode {
 		a.logger.Info("byte-hash dedup hit", Fields{"sourceKey": source.Key, "contentId": contentID})
 		if err := writeMappingWithRefs(ctx, a, buildMapping(source, a.pair, contentID), existing, true); err != nil {
 			return 0, err
@@ -244,10 +256,10 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	if err != nil {
 		return 0, err
 	}
-	a.logger.Info("probed source", Fields{"sourceKey": source.Key, "width": probe.Width, "height": probe.Height, "hasAudio": probe.HasAudio})
+	a.logger.Info("probed source", Fields{"sourceKey": source.Key, "width": probe.Width, "height": probe.Height, "rotation": probe.Rotation, "hasAudio": probe.HasAudio})
 
 	// 7. Effective ladder.
-	ladder := computeEffectiveLadder(a.cfg.Ladder, probe.Width, probe.Height)
+	ladder := computeEffectiveLadder(a.cfg.Ladder, probe.Width, probe.Height, probe.BitrateKbps)
 
 	// 8. Fingerprint.
 	fp, err := FingerprintVideo(ctx, localSource, 2)
@@ -300,13 +312,63 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 	if err := WriteMetadata(ctx, a.destClient, dest, md); err != nil {
 		return 0, err
 	}
-	if err := writeMappingWithRefs(ctx, a, buildMapping(source, a.pair, contentID), existing, false); err != nil {
+	// A re-encode overwrites content other keys may already reference, so the
+	// reverse index must be seeded from them rather than started fresh.
+	if err := writeMappingWithRefs(ctx, a, buildMapping(source, a.pair, contentID), existing, reencode); err != nil {
 		return 0, err
 	}
 	a.logger.Info("transcode complete", Fields{"sourceKey": source.Key, "contentId": contentID})
 
 	clearTombstone(ctx, a, source.Key)
 	return outcomeTranscoded, nil
+}
+
+// legacyOutputNeedsReencode decides whether a mapping written by an encoder
+// older than REENCODE_BELOW_VERSION must be re-encoded. Encoders before 0.2.0
+// fit every source into the ladder's landscape boxes, so only sources of a
+// different display aspect (portrait, square, 4:3, rotated phone video) came
+// out letterboxed. The source is probed in place through a presigned URL, so
+// deciding costs a few header reads, not a download. Content that another key
+// already re-encoded, or whose old layout was already right, has its mapping
+// restamped so it is never checked again.
+func legacyOutputNeedsReencode(ctx context.Context, a pairArgs, source SourceObject, existing SourceMapping) (bool, error) {
+	dest := a.pair.Dest.Bucket
+	md, err := ReadMetadata(ctx, a.destClient, dest, existing.ContentID)
+	if err != nil {
+		return false, err
+	}
+	if md != nil && !versionBelow(md.EncoderVersion, a.cfg.ReencodeBelowVersion) {
+		return false, restampMapping(ctx, a, existing, md.EncoderVersion)
+	}
+
+	url, err := PresignGet(ctx, a.sourceClient, a.pair.Source.Bucket, source.Key, 15*time.Minute)
+	if err != nil {
+		return false, err
+	}
+	probe, err := ProbeSource(ctx, url)
+	if err != nil {
+		return false, err
+	}
+	ref := a.cfg.Ladder[0]
+	if needsReframe(probe.Width, probe.Height, ref.Width, ref.Height) {
+		return true, nil
+	}
+
+	a.logger.Info("legacy output layout is already correct; restamping", Fields{
+		"sourceKey": source.Key, "contentId": existing.ContentID, "width": probe.Width, "height": probe.Height,
+	})
+	if md != nil {
+		md.EncoderVersion = Version
+		if err := WriteMetadata(ctx, a.destClient, dest, *md); err != nil {
+			return false, err
+		}
+	}
+	return false, restampMapping(ctx, a, existing, Version)
+}
+
+func restampMapping(ctx context.Context, a pairArgs, m SourceMapping, version string) error {
+	m.EncoderVersion = version
+	return WriteMapping(ctx, a.destClient, a.pair.Dest.Bucket, m)
 }
 
 func writeFailureTombstone(ctx context.Context, a pairArgs, source SourceObject, cause error) {
@@ -371,19 +433,6 @@ func buildMapping(source SourceObject, pair BucketPair, contentID string) Source
 		ContentID:          contentID, HLSRoot: MasterPlaylistKey(contentID),
 		EncodedAt: nowISO(), EncoderVersion: Version,
 	}
-}
-
-func computeEffectiveLadder(full []LadderRung, w, h int) []LadderRung {
-	var filtered []LadderRung
-	for _, r := range full {
-		if r.Width <= w && r.Height <= h {
-			filtered = append(filtered, r)
-		}
-	}
-	if len(filtered) > 0 {
-		return filtered
-	}
-	return []LadderRung{full[0]}
 }
 
 func isHigherQuality(probe *ProbeResult, stored FingerprintIndexEntry) bool {

@@ -37,16 +37,36 @@ Entrypoints depend on `lib` via `workspace:*` (pnpm-resolved local link; everyth
 
 ## Default ABR ladder
 
-H.264 (Main profile) + AAC, four rungs. Skips rungs above source resolution (no upscaling).
+H.264 (Main profile) + AAC, four rungs. A rung is named for its **short edge** and keeps the
+source's aspect ratio and orientation — a portrait 1080×1920 phone video gets a 360×640 360p,
+never a 640×360 frame with the picture pillarboxed inside it. Rungs whose short edge exceeds
+the source's are skipped (no upscaling); a source smaller than the lowest rung gets that rung at
+its own size. Each rung's video bitrate is capped at 1.25× the source bitrate (floor 200 kbps),
+since spending more only re-encodes the source's artifacts.
 
-| Rung  | Resolution | Video bitrate | Audio bitrate |
-| ----- | ---------- | ------------- | ------------- |
-| 360p  | 640×360    | 800 kbps      | 96 kbps       |
-| 480p  | 854×480    | 1400 kbps     | 128 kbps      |
-| 720p  | 1280×720   | 2800 kbps     | 128 kbps      |
-| 1080p | 1920×1080  | 5000 kbps     | 192 kbps      |
+| Rung  | Short edge | 16:9 landscape | 9:16 portrait | Video bitrate | Audio bitrate |
+| ----- | ---------- | -------------- | ------------- | ------------- | ------------- |
+| 360p  | 360        | 640×360        | 360×640       | 800 kbps      | 96 kbps       |
+| 480p  | 480        | 854×480        | 480×854       | 1400 kbps     | 128 kbps      |
+| 720p  | 720        | 1280×720       | 720×1280      | 2800 kbps     | 128 kbps      |
+| 1080p | 1080       | 1920×1080      | 1080×1920     | 5000 kbps     | 192 kbps      |
+
+Resolution is the **display** size: ffprobe's rotation (Display Matrix side data, or the legacy
+`rotate` tag) is applied first, as phones store portrait video as rotated landscape frames.
 
 Configurable via `HLS_LADDER` env var (JSON array).
+
+### Re-encoding outputs from older encoders
+
+Encoders before 0.2.0 fit every source into the ladder's landscape boxes, so portrait, square,
+4:3 and rotated phone video came out letterboxed or pillarboxed. Set
+`REENCODE_BELOW_VERSION=0.2.0` on a worker to fix existing outputs: a mapping written by an
+older encoder is no longer a cache hit. The source is probed in place through a presigned URL
+(header reads, no download); if its display aspect matches the ladder's, the old output was
+already right and the mapping and metadata are just restamped. Otherwise it is re-encoded over
+the same `by-id/<contentId>/` tree. Content another key already re-encoded is restamped too, so
+each output is checked once. Unset the variable once a full sweep reports no re-encodes.
+Go worker only; the TypeScript `lib` pipeline has the short-edge ladder but not this switch.
 
 ## Bucket layout
 
@@ -248,6 +268,7 @@ Each pair JSON object:
 | `DEST_SECRET_ACCESS_KEY`     |    †     | —                    | Env-level fallback                                                            |
 | `DEST_REGION`                |    no    | `auto`               |                                                                               |
 | `HLS_LADDER`                 |    no    | (built-in)           | JSON array overriding ABR ladder                                              |
+| `REENCODE_BELOW_VERSION`     |    no    | —                    | Re-encode outputs an older encoder laid out wrongly (see above)               |
 | `MAX_RUNTIME_SECONDS`        |    no    | platform default     | Self-imposed runtime budget ceiling                                           |
 | `LOCK_TTL_MULTIPLIER`        |    no    | `1.5`                | Lock TTL = `MAX_RUNTIME × this`                                               |
 | `BUDGET_MULTIPLIER`          |    no    | `0.75`               | Budget = `MAX_RUNTIME × this`                                                 |

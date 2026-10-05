@@ -55,7 +55,9 @@ func buildHLSArgs(opts TranscodeOptions) []string {
 		gopSize = 48
 	}
 
-	// Filter graph: split video N ways, scale + pad each.
+	// Filter graph: split video N ways and scale each to its rung's exact output
+	// size (computeEffectiveLadder keeps the source aspect, so no padding).
+	// ffmpeg auto-rotates on decode, so the frames are already upright.
 	splitOutputs := ""
 	for i := range ladder {
 		splitOutputs += fmt.Sprintf("[v%d]", i)
@@ -67,8 +69,8 @@ func buildHLSArgs(opts TranscodeOptions) []string {
 			scaleClauses += ";"
 		}
 		scaleClauses += fmt.Sprintf(
-			"[v%d]scale=w=%d:h=%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2[s%d]",
-			i, rung.Width, rung.Height, rung.Width, rung.Height, i)
+			"[v%d]scale=w=%d:h=%d,setsar=1[s%d]",
+			i, rung.Width, rung.Height, i)
 	}
 	filterComplex := splitClause + ";" + scaleClauses
 

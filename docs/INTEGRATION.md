@@ -108,7 +108,8 @@ Two things to know about the output tree:
 
 `by-id/<contentId>/metadata.json` carries the probe result and the ladder
 actually used — source width, height, duration, bitrate, and the rungs that
-survived the "no upscaling" filter. Useful for a player poster aspect ratio or a
+survived the "no upscaling" filter, each with its actual output size. Rungs keep the
+source's orientation, so a portrait video's renditions are portrait. Useful for a player poster aspect ratio or a
 duration badge without touching the source file. Read it through `hlsRoot`'s
 directory rather than assembling the key from `contentId`.
 

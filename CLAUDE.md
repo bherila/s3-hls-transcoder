@@ -44,7 +44,7 @@ Two layers in v1: (1) byte-hash of source bytes (SHA-256), (2) MPEG-7 video sign
 
 ## ABR ladder
 
-H.264 Main + AAC. Default rungs: 360p / 480p / 720p / 1080p. Skip rungs above source resolution. HEVC/AV1 are out of scope (see [FUTURE.md](./FUTURE.md)).
+H.264 Main + AAC. Default rungs: 360p / 480p / 720p / 1080p, named for their **short edge** and sized to the source's display aspect and orientation (no padding; rotation applied). Skip rungs above the source's short edge. HEVC/AV1 are out of scope (see [FUTURE.md](./FUTURE.md)).
 
 ## Conventions
 

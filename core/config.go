@@ -57,8 +57,12 @@ type Config struct {
 	ErrorTombstones       bool
 	TombstoneMaxAttempts  int
 	MaxConcurrency        int
-	LogLevel              LogLevel
-	Platform              Platform
+	// ReencodeBelowVersion, when set, re-checks outputs whose mapping was
+	// written by an older encoder and re-encodes those the old encoder laid
+	// out wrongly (see legacyOutputNeedsReencode). Empty disables it.
+	ReencodeBelowVersion string
+	LogLevel             LogLevel
+	Platform             Platform
 }
 
 // DefaultLadder is the v1 H.264/AAC ABR ladder.
@@ -117,6 +121,13 @@ func LoadConfig(platform Platform) (*Config, error) {
 		return nil, err
 	}
 
+	reencodeBelow := strings.TrimSpace(os.Getenv("REENCODE_BELOW_VERSION"))
+	if reencodeBelow != "" {
+		if _, ok := parseVersion(reencodeBelow); !ok {
+			return nil, fmt.Errorf("REENCODE_BELOW_VERSION %q is not a dotted version like 0.2.0", reencodeBelow)
+		}
+	}
+
 	return &Config{
 		Pairs:                 pairs,
 		Ladder:                ladder,
@@ -130,6 +141,7 @@ func LoadConfig(platform Platform) (*Config, error) {
 		ErrorTombstones:       os.Getenv("ERROR_TOMBSTONES") != "false",
 		TombstoneMaxAttempts:  int(tombstoneAttempts),
 		MaxConcurrency:        int(maxConc),
+		ReencodeBelowVersion:  reencodeBelow,
 		LogLevel:              logLevel,
 		Platform:              platform,
 	}, nil
