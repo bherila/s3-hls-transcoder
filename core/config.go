@@ -126,6 +126,11 @@ func LoadConfig(platform Platform) (*Config, error) {
 		if _, ok := parseVersion(reencodeBelow); !ok {
 			return nil, fmt.Errorf("REENCODE_BELOW_VERSION %q is not a dotted version like 0.2.0", reencodeBelow)
 		}
+		// Outputs are stamped with this binary's Version; a threshold above it
+		// would mark every output stale again on every sweep.
+		if versionBelow(Version, reencodeBelow) {
+			return nil, fmt.Errorf("REENCODE_BELOW_VERSION %s is newer than this encoder (%s)", reencodeBelow, Version)
+		}
 	}
 
 	return &Config{
