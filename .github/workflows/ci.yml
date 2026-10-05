@@ -31,7 +31,15 @@ jobs:
 
       - run: go build ./...
 
+      # core/ffmpeg_test.go transcodes real sources (one and several
+      # renditions). REQUIRE_FFMPEG makes a missing binary fail the job
+      # instead of silently skipping the test.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - run: go test ./... -race
+        env:
+          REQUIRE_FFMPEG: "1"
 
   node:
     runs-on: ubuntu-latest
