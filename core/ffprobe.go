@@ -8,6 +8,7 @@ import (
 	"math"
 	"os/exec"
 	"strconv"
+	"strings"
 )
 
 // ProbeResult is the subset of ffprobe output we use.
@@ -26,11 +27,14 @@ type ProbeResult struct {
 }
 
 type ffprobeStream struct {
-	CodecType    string `json:"codec_type"`
-	CodecName    string `json:"codec_name"`
-	Width        int    `json:"width"`
-	Height       int    `json:"height"`
-	SideDataList []struct {
+	CodecType string `json:"codec_type"`
+	CodecName string `json:"codec_name"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	// SampleAspectRatio is the pixel shape, e.g. "32:27" for anamorphic
+	// 720×480 shown at 16:9; "1:1", "0:1" or absent means square pixels.
+	SampleAspectRatio string `json:"sample_aspect_ratio"`
+	SideDataList      []struct {
 		SideDataType string  `json:"side_data_type"`
 		Rotation     float64 `json:"rotation"`
 	} `json:"side_data_list"`
@@ -87,6 +91,11 @@ func parseProbeOutput(raw []byte, input string) (*ProbeResult, error) {
 
 	rotation := streamRotation(video)
 	width, height := video.Width, video.Height
+	// Non-square pixels: the display width is the coded width × SAR, which is
+	// what the rungs must be sized from (FFmpeg: DAR = iw/ih × sar).
+	if num, den, ok := parseRatio(video.SampleAspectRatio); ok && num != den {
+		width = int(math.Round(float64(width) * float64(num) / float64(den)))
+	}
 	if rotation%180 != 0 {
 		width, height = height, width
 	}
@@ -136,4 +145,18 @@ func streamRotation(s *ffprobeStream) int {
 		r += 360
 	}
 	return r
+}
+
+// parseRatio parses "num:den" with both parts positive.
+func parseRatio(s string) (int, int, bool) {
+	n, d, found := strings.Cut(s, ":")
+	if !found {
+		return 0, 0, false
+	}
+	num, err1 := strconv.Atoi(n)
+	den, err2 := strconv.Atoi(d)
+	if err1 != nil || err2 != nil || num <= 0 || den <= 0 {
+		return 0, 0, false
+	}
+	return num, den, true
 }

@@ -100,6 +100,14 @@ func TestProbeAppliesRotation(t *testing.T) {
 		{"upside down keeps orientation", `{"streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":720,
 			"side_data_list":[{"side_data_type":"Display Matrix","rotation":180}]}],"format":{}}`, 1280, 720, 180},
 		{"no rotation", `{"streams":[{"codec_type":"video","codec_name":"h264","width":432,"height":768}],"format":{}}`, 432, 768, 0},
+		{"anamorphic 720x480 shown at 16:9", `{"streams":[{"codec_type":"video","codec_name":"mpeg2video","width":720,"height":480,
+			"sample_aspect_ratio":"32:27"}],"format":{}}`, 853, 480, 0},
+		{"anamorphic and rotated", `{"streams":[{"codec_type":"video","codec_name":"h264","width":720,"height":480,
+			"sample_aspect_ratio":"32:27","side_data_list":[{"side_data_type":"Display Matrix","rotation":90}]}],"format":{}}`, 480, 853, 90},
+		{"square pixels reported as 1:1", `{"streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":720,
+			"sample_aspect_ratio":"1:1"}],"format":{}}`, 1280, 720, 0},
+		{"unknown SAR 0:1", `{"streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":720,
+			"sample_aspect_ratio":"0:1"}],"format":{}}`, 1280, 720, 0},
 	}
 	for _, c := range cases {
 		got, err := parseProbeOutput([]byte(c.json), "test")

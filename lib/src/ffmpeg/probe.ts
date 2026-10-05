@@ -19,6 +19,8 @@ interface FfprobeOutput {
     codec_name?: string;
     width?: number;
     height?: number;
+    /** Pixel shape, e.g. "32:27" (anamorphic); "1:1"/"0:1"/absent = square. */
+    sample_aspect_ratio?: string;
     side_data_list?: Array<{ side_data_type?: string; rotation?: number }>;
     tags?: { rotate?: string };
   }>;
@@ -55,8 +57,16 @@ export function parseProbeOutput(stdout: string, input: string): ProbeResult {
     : undefined;
 
   const rotation = streamRotation(video);
+  // Non-square pixels: display width = coded width × SAR (FFmpeg: DAR = iw/ih × sar).
+  const sar = /^(\d+):(\d+)$/.exec(video.sample_aspect_ratio ?? "");
+  const sarNum = sar ? Number(sar[1]) : 0;
+  const sarDen = sar ? Number(sar[2]) : 0;
+  const codedWidth =
+    sarNum > 0 && sarDen > 0 && sarNum !== sarDen
+      ? Math.round((video.width * sarNum) / sarDen)
+      : video.width;
   const [width, height] =
-    rotation % 180 === 0 ? [video.width, video.height] : [video.height, video.width];
+    rotation % 180 === 0 ? [codedWidth, video.height] : [video.height, codedWidth];
 
   const result: ProbeResult = {
     width,

@@ -77,6 +77,17 @@ describe("parseProbeOutput", () => {
     expect([probe.width, probe.height, probe.rotation]).toEqual([1080, 1920, 270]);
   });
 
+  it("applies a non-square sample aspect ratio (anamorphic 16:9)", () => {
+    const probe = parseProbeOutput(
+      JSON.stringify({
+        streams: [{ codec_type: "video", width: 720, height: 480, sample_aspect_ratio: "32:27" }],
+        format: {},
+      }),
+      "test",
+    );
+    expect([probe.width, probe.height]).toEqual([853, 480]);
+  });
+
   it("applies a legacy rotate tag", () => {
     const probe = parseProbeOutput(
       JSON.stringify({
