@@ -22,7 +22,12 @@ import type { Config, LadderRung, Logger } from "@s3-hls-transcoder/lib";
 
 // Pinned: this image backs a required CI job, so tracking :latest would let an
 // upstream release break CI on an unrelated commit.
-const MINIO_IMAGE = "minio/minio:RELEASE.2025-04-22T22-12-26Z";
+// The minio/minio Docker Hub repository no longer exists (pulls fail with
+// "pull access denied"), so use Chainguard's build of the same server, pinned
+// by digest (MinIO RELEASE.2026-09-22T19-25-18Z). Same entrypoint, flags and
+// health endpoint.
+const MINIO_IMAGE =
+  "cgr.dev/chainguard/minio@sha256:4cf4831a2bbcf13ddca09c1cbcc9faff716dd3c4247e0babc32864b8ee8e0034";
 const MINIO_PORT = 9000;
 export const MINIO_ACCESS_KEY = "minioadmin";
 export const MINIO_SECRET_KEY = "minioadmin";
