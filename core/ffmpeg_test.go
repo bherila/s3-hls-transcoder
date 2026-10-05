@@ -10,15 +10,17 @@ import (
 	"testing"
 )
 
-// requireFfmpeg skips without an ffmpeg binary, unless REQUIRE_FFMPEG=1 (CI),
-// where a missing binary must fail rather than silently skip.
+// requireFfmpeg skips without the ffmpeg and ffprobe binaries, unless
+// REQUIRE_FFMPEG=1 (CI), where a missing binary must fail rather than skip.
 func requireFfmpeg(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath(findFfmpeg()); err != nil {
-		if os.Getenv("REQUIRE_FFMPEG") == "1" {
-			t.Fatalf("ffmpeg required but not found: %v", err)
+	for _, bin := range []string{findFfmpeg(), findFfprobe()} {
+		if _, err := exec.LookPath(bin); err != nil {
+			if os.Getenv("REQUIRE_FFMPEG") == "1" {
+				t.Fatalf("%s required but not found: %v", bin, err)
+			}
+			t.Skipf("%s not found; set REQUIRE_FFMPEG=1 to make this fatal", bin)
 		}
-		t.Skip("ffmpeg not found; set REQUIRE_FFMPEG=1 to make this fatal")
 	}
 }
 
