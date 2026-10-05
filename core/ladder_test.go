@@ -172,13 +172,13 @@ func TestVersionBelow(t *testing.T) {
 	}
 }
 
-func TestMediaNamesAreUniquePerEncode(t *testing.T) {
-	// Several renditions: ffmpeg rejects a custom init name without %v.
-	args := buildHLSArgs(TranscodeOptions{Input: "in", OutputDir: "out", Ladder: DefaultLadder, MediaTag: "0-2-0-abcd1234"})
-	joined := strings.Join(args, " ")
-	for _, want := range []string{"seg_0-2-0-abcd1234_%05d.m4s", "-hls_fmp4_init_filename init_0-2-0-abcd1234_%v.mp4"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("args missing %q:\n%s", want, joined)
+func TestFfmpegGetsOnlyDefaultMediaNames(t *testing.T) {
+	// Custom -hls_* name templates expand differently by rendition count (one
+	// rendition writes a literal "%v"); naming is done afterwards in Go.
+	for _, ladder := range [][]LadderRung{DefaultLadder[:1], DefaultLadder} {
+		joined := strings.Join(buildHLSArgs(TranscodeOptions{Input: "in", OutputDir: "out", Ladder: ladder}), " ")
+		if strings.Contains(joined, "hls_fmp4_init_filename") || !strings.Contains(joined, "seg_%05d.m4s") {
+			t.Errorf("%d rungs: unexpected naming args:\n%s", len(ladder), joined)
 		}
 	}
 

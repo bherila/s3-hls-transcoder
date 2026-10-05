@@ -21,8 +21,8 @@ type TranscodeOptions struct {
 	HasAudio       bool
 	SegmentSeconds int // default 6
 	GOPSize        int // default 48
-	// MediaTag names this encode's segment and init objects. Empty means a
-	// fresh newMediaTag(); set it only to make arguments deterministic in tests.
+	// MediaTag names this encode's segment and init objects (see
+	// versionHLSTree). Empty means a fresh newMediaTag().
 	MediaTag string
 }
 
@@ -53,6 +53,12 @@ func TranscodeToHLS(ctx context.Context, opts TranscodeOptions) error {
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("ffmpeg transcode failed: %w\nstderr: %s", err, tail(errb.String(), 2000))
+	}
+	if err := versionHLSTree(opts.OutputDir, opts.MediaTag); err != nil {
+		return fmt.Errorf("naming HLS media: %w", err)
+	}
+	if err := validateHLSTree(opts.OutputDir); err != nil {
+		return fmt.Errorf("invalid HLS output: %w", err)
 	}
 	return nil
 }
@@ -133,13 +139,11 @@ func buildHLSArgs(opts TranscodeOptions) []string {
 		"-hls_playlist_type", "vod",
 		"-hls_segment_type", "fmp4",
 		"-hls_flags", "independent_segments",
-		// Media names are unique to this encode (see newMediaTag), so a
-		// re-encode in place adds segment/init objects and never overwrites
-		// ones that cached playlists still reference.
-		"-hls_segment_filename", filepath.Join(opts.OutputDir, "%v", "seg_"+opts.MediaTag+"_%05d.m4s"),
-		// ffmpeg requires %v in a custom init name once there are several
-		// renditions; it expands to the rendition name, in that rendition's dir.
-		"-hls_fmp4_init_filename", "init_"+opts.MediaTag+"_%v.mp4",
+		// ffmpeg's default names (init.mp4, seg_%05d.m4s), which behave the
+		// same for any rendition count; versionHLSTree then gives them this
+		// encode's unique names, so a re-encode in place never overwrites media
+		// that cached playlists still reference.
+		"-hls_segment_filename", filepath.Join(opts.OutputDir, "%v", "seg_%05d.m4s"),
 		"-master_pl_name", "master.m3u8",
 		"-var_stream_map", varStreamMap,
 		filepath.Join(opts.OutputDir, "%v", "index.m3u8"),
