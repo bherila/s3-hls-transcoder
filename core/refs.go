@@ -10,6 +10,7 @@ import (
 )
 
 const refsPrefix = "refs/"
+const maxIndexedRefs = 1000
 
 // ContentRefs is the reverse index for one content ID: the source keys whose
 // mapping currently points at it. It lives at refs/<contentID>.json, alongside
@@ -18,12 +19,14 @@ const refsPrefix = "refs/"
 // and shared across every source that deduped onto the same content. Keeping
 // it out also leaves by-id/ genuinely immutable for caching.
 //
-// The index exists so that refcount decisions cost one GET per content ID
-// instead of a full mappings/ scan (see FindMappingsForContentID).
+// Up to maxIndexedRefs entries make refcount decisions cost one GET per content
+// ID instead of a full mappings/ scan. More highly shared content is marked as
+// overflow so cleanup can safely scan mappings without growing this object.
 type ContentRefs struct {
 	Version    int      `json:"version"`
 	ContentID  string   `json:"contentId"`
 	SourceKeys []string `json:"sourceKeys"`
+	Overflow   bool     `json:"overflow,omitempty"`
 	UpdatedAt  string   `json:"updatedAt"`
 }
 
@@ -58,14 +61,26 @@ func ReadRefs(ctx context.Context, client *s3.Client, bucket, contentID string) 
 	return refs, nil
 }
 
-// WriteRefs overwrites a content ID's reverse index with sourceKeys, sorted and
-// de-duplicated.
+// WriteRefs overwrites a content ID's reverse index with a bounded, sorted,
+// de-duplicated set. Overflow tells readers to use the authoritative mappings.
 func WriteRefs(ctx context.Context, client *s3.Client, bucket, contentID string, sourceKeys []string) error {
-	keys := append([]string(nil), sourceKeys...)
+	seen := make(map[string]struct{}, min(len(sourceKeys), maxIndexedRefs+1))
+	keys := make([]string, 0, min(len(sourceKeys), maxIndexedRefs))
+	overflow := false
+	for _, key := range sourceKeys {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if len(keys) == maxIndexedRefs {
+			overflow = true
+			break
+		}
+		keys = append(keys, key)
+	}
 	slices.Sort(keys)
-	keys = slices.Compact(keys)
 	return putJSONObject(ctx, client, bucket, RefsKey(contentID), ContentRefs{
-		Version: 1, ContentID: contentID, SourceKeys: keys, UpdatedAt: nowISO(),
+		Version: 1, ContentID: contentID, SourceKeys: keys, Overflow: overflow, UpdatedAt: nowISO(),
 	})
 }
 
@@ -91,6 +106,12 @@ func AddRef(ctx context.Context, client *s3.Client, bucket, contentID, sourceKey
 	}
 	var keys []string
 	if refs != nil {
+		// Once the bounded index overflows, cleanup deliberately falls back to a
+		// mappings scan. Do not repeatedly read, copy, and rewrite an ever-growing
+		// attacker-controlled list on each dedup hit.
+		if refs.Overflow {
+			return nil
+		}
 		if slices.Contains(refs.SourceKeys, sourceKey) {
 			return nil
 		}
@@ -110,6 +131,11 @@ func RemoveRef(ctx context.Context, client *s3.Client, bucket, contentID, source
 	if err != nil || refs == nil {
 		return err
 	}
+	if refs.Overflow {
+		// The stored keys are only a sample. Removing from it could incorrectly
+		// make the index look complete; cleanup will rebuild it from mappings.
+		return nil
+	}
 	remaining := slices.DeleteFunc(append([]string(nil), refs.SourceKeys...), func(k string) bool {
 		return k == sourceKey
 	})
@@ -128,7 +154,7 @@ func ListRefs(ctx context.Context, client *s3.Client, bucket, contentID string, 
 	if err != nil {
 		return nil, err
 	}
-	if refs != nil {
+	if refs != nil && !refs.Overflow {
 		return refs.SourceKeys, nil
 	}
 	keys, err := FindMappingsForContentID(ctx, client, bucket, contentID)

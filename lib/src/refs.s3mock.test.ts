@@ -90,6 +90,27 @@ describe("addRef", () => {
     expect(refs!.sourceKeys).toEqual(["a/one.mp4", "a/two.mp4"]);
   });
 
+  it("caps a highly shared index and stops rewriting it", async () => {
+    const keys = Array.from({ length: 1001 }, (_, i) => `duplicates/${i}.mp4`);
+    const full: ContentRefs = {
+      version: 1,
+      contentId: CONTENT_ID,
+      sourceKeys: keys.slice(0, 1000),
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    objects.set(refsKey(CONTENT_ID), JSON.stringify(full));
+
+    await addRef(client(), BUCKET, CONTENT_ID, keys[1000]!, false);
+
+    const stored = await readRefs(client(), BUCKET, CONTENT_ID);
+    expect(stored!.overflow).toBe(true);
+    expect(stored!.sourceKeys).toHaveLength(1000);
+    s3Mock.resetHistory();
+    await addRef(client(), BUCKET, CONTENT_ID, "duplicates/another.mp4", false);
+
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(0);
+  });
+
   // Content transcoded in this pass cannot be referenced by any mapping yet, so
   // creating its index must not scan — that would put the O(N) read this index
   // exists to avoid onto the ingest path of every new upload.

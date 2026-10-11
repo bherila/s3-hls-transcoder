@@ -41,6 +41,32 @@ func TestAddRefCreatesAndAppends(t *testing.T) {
 	}
 }
 
+func TestWriteRefsCapsSharedContentIndex(t *testing.T) {
+	fake := &cleanupS3Fake{}
+	client := newCleanupS3Client(t, fake)
+	keys := make([]string, maxIndexedRefs+1)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("duplicates/%04d.mp4", i)
+	}
+	if err := WriteRefs(context.Background(), client, "dest", refsContentID, keys); err != nil {
+		t.Fatalf("WriteRefs: %v", err)
+	}
+	refs, err := ReadRefs(context.Background(), client, "dest", refsContentID)
+	if err != nil {
+		t.Fatalf("ReadRefs: %v", err)
+	}
+	if !refs.Overflow || len(refs.SourceKeys) != maxIndexedRefs {
+		t.Fatalf("overflow index = %+v, want overflow with %d keys", refs, maxIndexedRefs)
+	}
+	before := fake.getCount("dest", RefsKey(refsContentID))
+	if err := AddRef(context.Background(), client, "dest", refsContentID, "duplicates/another.mp4", false); err != nil {
+		t.Fatalf("AddRef after overflow: %v", err)
+	}
+	if after := fake.getCount("dest", RefsKey(refsContentID)); after != before+1 {
+		t.Fatalf("AddRef performed unexpected index reads: %d -> %d", before, after)
+	}
+}
+
 func TestRemoveRef(t *testing.T) {
 	fake := &cleanupS3Fake{}
 	client := newCleanupS3Client(t, fake)
