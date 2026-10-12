@@ -31,8 +31,8 @@ Each package has its own README with platform-specific setup. Configuration is v
 
 ## Prerequisites
 
-- **Node.js 20+**
-- **pnpm 10+** (`npm install -g pnpm`, or via Corepack)
+- **Node.js 22+**
+- **pnpm 12.11.2** (`npm install -g pnpm@12.11.2`, or via Corepack)
 - **ffmpeg** on `PATH` (only needed for the `local` entrypoint; the `aws` and `cloudflare` Dockerfiles vendor it)
 - An **S3-compatible source bucket** (R2, S3, MinIO, …) with at least one video, and a **separate** destination bucket. Source and destination must not overlap (same endpoint + bucket name with overlapping prefixes is rejected at startup).
 

@@ -4,7 +4,7 @@ Project: HLS video transcoder for S3-compatible buckets. Read **[PLAN.md](./PLAN
 
 ## Stack
 
-- Node 20+, TypeScript (ESM), pnpm workspaces.
+- Node 22+, TypeScript (ESM), pnpm workspaces.
 - ffmpeg as a native binary (not wasm). Spawn directly via `child_process`.
 - AWS SDK v3 (`@aws-sdk/client-s3`) for both source and destination — works against R2, S3, MinIO.
 - Vitest for tests.

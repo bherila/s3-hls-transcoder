@@ -15,7 +15,7 @@ ARG NODE_VERSION=22
 FROM node:${NODE_VERSION}-alpine AS builder
 
 RUN apk add --no-cache build-base python3 git \
- && npm install -g pnpm@10
+ && npm install -g pnpm@12.11.2
 
 WORKDIR /workspace
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
