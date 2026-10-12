@@ -4,3 +4,9 @@ packages:
   - cloudflare
   - local
   - integration
+allowBuilds:
+  cpu-features: true
+  esbuild: true
+  protobufjs: true
+  spotlight-noindex: true
+  ssh2: true

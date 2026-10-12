@@ -6,8 +6,8 @@ See **[../PLAN.md](../PLAN.md)** for architecture and **[../CLAUDE.md](../CLAUDE
 
 ## Setup
 
-1. Install Node 20+ and ffmpeg (`apt install ffmpeg` on Debian/Ubuntu, `brew install ffmpeg` on macOS).
-2. Install pnpm (`npm install -g pnpm` or use Corepack).
+1. Install Node 22+ and ffmpeg (`apt install ffmpeg` on Debian/Ubuntu, `brew install ffmpeg` on macOS).
+2. Install pnpm 12.11.2 (`npm install -g pnpm@12.11.2` or use Corepack).
 3. From the repo root: `pnpm install` then `pnpm build`.
 4. In `local/`: `cp .env.sample .env` and fill in credentials.
 5. Run a one-shot pass: `pnpm start` (or `pnpm dev` to skip the build step).
