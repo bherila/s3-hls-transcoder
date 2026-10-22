@@ -230,7 +230,8 @@ Bucket pairs are configured one of three ways, in priority order:
 3. `SOURCE_*` / `DEST_*` env vars — convenient single-pair fallback.
 
 The Go workers schedule one source per pair per round with one active pipeline
-across all pairs. Daemon mode retains the next tenant across sweeps. See
+across all pairs. Durable tenant rotation and per-destination source checkpoints
+retain progress across daemon sweeps and fresh cron processes. See
 [multi-tenant operation](./docs/MULTI_TENANT.md) for isolation, shared deadlines
 and migration from separate containers. TypeScript workers remain sequential.
 

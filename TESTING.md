@@ -13,9 +13,10 @@ REQUIRE_FFMPEG=1 go test ./... -race
 ```
 
 `core/scheduler_test.go` exercises round-robin order, independent tenant
-credentials and bucket routing, shared deadlines, interruption recovery and
-lock/scan failure isolation against a local S3 HTTP fake. No live buckets are
-used.
+credentials and bucket routing, shared deadlines, fresh-cron tenant rotation,
+durable progress beyond cached/interrupted sources, deleted cursor keys,
+eventual wrap/ETag changes, cancellation retries and lock/scan failure isolation
+against a local S3 HTTP fake. No live buckets are used.
 
 ```bash
 pnpm test          # all packages (lib + entrypoints)

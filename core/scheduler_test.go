@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -20,13 +21,14 @@ type schedulerS3 struct {
 	objects            map[string][]string
 	failLock, failScan string
 	stallScan          string
+	etags              map[string]string
 }
 
 func schedulerFixture(t *testing.T) (OrchestratorOptions, *schedulerS3) {
 	t.Helper()
 	f := &schedulerS3{locks: map[string][]byte{}, objects: map[string][]string{
-		"source-a": {"videos/shared.mp4", "videos/second.mp4", "videos/third.mp4"},
-		"source-b": {"videos/shared.mp4", "videos/second.mp4"},
+		"source-a": {"videos/first.mp4", "videos/second.mp4", "videos/third.mp4"},
+		"source-b": {"videos/first.mp4", "videos/second.mp4"},
 	}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -56,8 +58,17 @@ func schedulerFixture(t *testing.T) (OrchestratorOptions, *schedulerS3) {
 			}
 			w.Header().Set("Content-Type", "application/xml")
 			fmt.Fprint(w, `<ListBucketResult><IsTruncated>false</IsTruncated>`)
-			for _, key := range f.objects[bucket] {
-				fmt.Fprintf(w, `<Contents><Key>%s</Key><ETag>etag</ETag><Size>100</Size><LastModified>2026-10-01T00:00:00Z</LastModified></Contents>`, key)
+			keys := slices.Clone(f.objects[bucket])
+			slices.Sort(keys)
+			for _, key := range keys {
+				if after := r.URL.Query().Get("start-after"); after != "" && key <= after {
+					continue
+				}
+				etag := "etag"
+				if changed := f.etags[bucket+"/"+key]; changed != "" {
+					etag = changed
+				}
+				fmt.Fprintf(w, `<Contents><Key>%s</Key><ETag>%s</ETag><Size>100</Size><LastModified>2026-10-01T00:00:00Z</LastModified></Contents>`, key, etag)
 			}
 			fmt.Fprint(w, `</ListBucketResult>`)
 			return
@@ -68,7 +79,7 @@ func schedulerFixture(t *testing.T) (OrchestratorOptions, *schedulerS3) {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			if _, ok := f.locks[path]; ok {
+			if _, ok := f.locks[path]; ok && r.Header.Get("If-None-Match") == "*" {
 				w.WriteHeader(http.StatusPreconditionFailed)
 				return
 			}
@@ -102,8 +113,13 @@ func assertSchedulerLocksReleased(t *testing.T, f *schedulerS3) {
 	t.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.locks) != 0 {
-		t.Errorf("locks leaked: %v", f.locks)
+	for key := range f.locks {
+		if strings.HasSuffix(key, "/"+GlobalLockKey) || strings.HasSuffix(key, "/.processing") {
+			t.Errorf("lock leaked: %s", key)
+		}
+		if strings.Contains(key, "/errors/") {
+			t.Errorf("interruption created a failure tombstone: %s", key)
+		}
 	}
 }
 
@@ -118,7 +134,7 @@ func TestSchedulerRoundRobinAndIsolation(t *testing.T) {
 		}
 		return outcomeCached, nil
 	}, false)
-	want := []string{"a:videos/shared.mp4", "b:videos/shared.mp4", "a:videos/second.mp4", "b:videos/second.mp4", "a:videos/third.mp4"}
+	want := []string{"a:videos/first.mp4", "b:videos/first.mp4", "a:videos/second.mp4", "b:videos/second.mp4", "a:videos/third.mp4"}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("order = %v, want %v", order, want)
 	}
@@ -191,6 +207,9 @@ func TestSchedulerSkipsBusyOrFailingTenant(t *testing.T) {
 				return outcomeTranscoded, nil
 			}, false)
 			wantFailures := 1
+			if failure == "lock" {
+				wantFailures++ // This destination also refuses the coordinator write.
+			}
 			if failure == "busy" {
 				wantFailures = 0
 				delete(f.locks, "dest-a/"+GlobalLockKey)
@@ -257,5 +276,155 @@ func TestWorkersCacheSameSourceKeyInDedicatedBuckets(t *testing.T) {
 				t.Fatalf("expected only two original mappings, got %v", f.locks)
 			}
 		})
+	}
+}
+
+func TestSchedulerCheckpointProgressSurvivesNewCronRunnerAndWraps(t *testing.T) {
+	opts, f := schedulerFixture(t)
+	opts.Config.MaxRuntimeSeconds, opts.Config.BudgetMultiplier = 1, 1
+	// B gets one cached turn before A's expensive source exhausts the budget.
+	next := 1
+	runScheduled(context.Background(), opts, &next, func(ctx context.Context, a pairArgs, source SourceObject) (processOutcome, error) {
+		if a.pair.Name == "a" {
+			<-ctx.Done()
+			return 0, ctx.Err()
+		}
+		return outcomeCached, nil
+	}, false)
+	assertSchedulerLocksReleased(t, f)
+	for _, tenant := range []string{"a", "b"} {
+		if _, ok := f.locks["dest-"+tenant+"/"+checkpointKey(false)]; !ok {
+			t.Fatalf("missing durable progress for tenant %s", tenant)
+		}
+	}
+	var order []string
+	opts.Config.MaxRuntimeSeconds = 60
+	// A new runner has no in-memory tenant cursor, like a fresh cron process.
+	newRunner(opts, func(_ context.Context, a pairArgs, source SourceObject) (processOutcome, error) {
+		order = append(order, a.pair.Name+":"+source.Key)
+		return outcomeCached, nil
+	}, false)(context.Background())
+	want := []string{"b:videos/second.mp4", "a:videos/second.mp4", "a:videos/third.mp4"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("fresh runner did not progress beyond interrupted/cached prefixes: %v", order)
+	}
+	// A changed source behind the old cursor must be revisited after EOF wraps.
+	f.etags = map[string]string{"source-a/videos/first.mp4": "changed"}
+	f.objects["source-b"] = []string{"videos/second.mp4"} // Deleted cursor keys are valid StartAfter boundaries.
+	var changed bool
+	newRunner(opts, func(_ context.Context, a pairArgs, source SourceObject) (processOutcome, error) {
+		if a.pair.Name == "a" && source.Key == "videos/first.mp4" {
+			changed = source.ETag == "changed"
+		}
+		return outcomeCached, nil
+	}, false)(context.Background())
+	if !changed {
+		t.Fatal("full wrap did not retry the interrupted source's updated version")
+	}
+	assertSchedulerLocksReleased(t, f)
+}
+
+func TestSchedulerFreshCronRotatesPastExpensiveFirstTenant(t *testing.T) {
+	opts, f := schedulerFixture(t)
+	opts.Config.MaxRuntimeSeconds, opts.Config.BudgetMultiplier = 1, 1
+	newRunner(opts, func(ctx context.Context, a pairArgs, _ SourceObject) (processOutcome, error) {
+		if a.pair.Name != "a" {
+			t.Fatal("expected first tenant to consume this run")
+		}
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}, false)(context.Background())
+	opts.Config.MaxRuntimeSeconds = 60
+	var order []string
+	newRunner(opts, func(_ context.Context, a pairArgs, s SourceObject) (processOutcome, error) {
+		order = append(order, a.pair.Name+":"+s.Key)
+		return outcomeCached, nil
+	}, false)(context.Background())
+	if len(order) < 2 || order[0] != "b:videos/first.mp4" || order[1] != "a:videos/second.mp4" {
+		t.Fatalf("fresh cron must visit B before A's remaining backlog: %v", order)
+	}
+	var retried bool
+	newRunner(opts, func(_ context.Context, a pairArgs, s SourceObject) (processOutcome, error) {
+		retried = retried || (a.pair.Name == "a" && s.Key == "videos/first.mp4")
+		return outcomeCached, nil
+	}, false)(context.Background())
+	if !retried {
+		t.Fatal("interrupted first source was not retried after wrapping")
+	}
+	assertSchedulerLocksReleased(t, f)
+}
+
+func TestSchedulerTenantCheckpointIdentityAndValidation(t *testing.T) {
+	opts, f := schedulerFixture(t)
+	pairs := opts.Config.Pairs
+	key := tenantCheckpointKey(pairs, false)
+	changed := slices.Clone(pairs)
+	changed[0].Source.Prefix = "other/"
+	if key == tenantCheckpointKey(changed, false) || key == tenantCheckpointKey(pairs, true) {
+		t.Fatal("different inputs/workers shared a coordinator")
+	}
+	changed = slices.Clone(pairs)
+	changed[0].Dest.SecretAccessKey = "rotated-secret"
+	if key != tenantCheckpointKey(changed, false) {
+		t.Fatal("credential rotation reset scheduling progress")
+	}
+	f.locks[pairs[0].Dest.Bucket+"/"+key] = []byte(`{"version":1,"nextPair":99}`)
+	if _, err := readTenantCheckpoint(context.Background(), pairs, false, 0); err == nil {
+		t.Fatal("accepted an out-of-range tenant index")
+	}
+}
+
+func TestSchedulerSignalRetriesInterruptedSource(t *testing.T) {
+	opts, f := schedulerFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	next := 0
+	runScheduled(ctx, opts, &next, func(_ context.Context, _ pairArgs, source SourceObject) (processOutcome, error) {
+		if source.Key == "videos/second.mp4" {
+			cancel()
+			return 0, ctx.Err()
+		}
+		return outcomeCached, nil
+	}, false)
+	var first string
+	newRunner(opts, func(_ context.Context, a pairArgs, source SourceObject) (processOutcome, error) {
+		if first == "" && a.pair.Name == "a" {
+			first = source.Key
+		}
+		return outcomeCached, nil
+	}, false)(context.Background())
+	if first != "videos/second.mp4" {
+		t.Fatalf("signal must retry the interrupted source, got %q", first)
+	}
+	assertSchedulerLocksReleased(t, f)
+}
+
+func TestSchedulerDeletedCursorKeyAndInputIdentity(t *testing.T) {
+	opts, f := schedulerFixture(t)
+	pair := opts.Config.Pairs[0]
+	a := pairArgs{pair: pair, destClient: NewS3Client(pair.Dest)}
+	ctx := context.Background()
+	if err := writeSourceCheckpoint(ctx, a, false, "videos/first.mp4"); err != nil {
+		t.Fatal(err)
+	}
+	f.objects["source-a"] = []string{"videos/second.mp4"}
+	var first string
+	newRunner(opts, func(_ context.Context, a pairArgs, source SourceObject) (processOutcome, error) {
+		if first == "" && a.pair.Name == "a" {
+			first = source.Key
+		}
+		return outcomeCached, nil
+	}, false)(ctx)
+	if first != "videos/second.mp4" {
+		t.Fatalf("deleted cursor key prevented progress: %q", first)
+	}
+	if err := writeSourceCheckpoint(ctx, a, false, "videos/second.mp4"); err != nil {
+		t.Fatal(err)
+	}
+	a.pair.Source.Prefix = "changed/"
+	if key, err := readSourceCheckpoint(ctx, a, false); err != nil || key != "" {
+		t.Fatalf("a new input must not inherit old progress: %q, %v", key, err)
+	}
+	if key, err := readSourceCheckpoint(ctx, pairArgs{pair: pair, destClient: a.destClient}, true); err != nil || key != "" {
+		t.Fatalf("image and video progress must be isolated: %q, %v", key, err)
 	}
 }

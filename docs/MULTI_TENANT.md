@@ -14,10 +14,31 @@ start a second ffmpeg encode alongside another tenant's encode.
 Fairness is per source, not per CPU second. One long video can delay another
 tenant until it finishes or reaches the shared run deadline. In daemon mode the
 next sweep starts with the tenant following the last attempted source, so an
-interrupted long encode or stalled S3 request cannot always take the first turn. This cursor is kept
-in memory, so it resets when the process restarts. Each sweep still lists from
-the beginning and skips cached mappings; the cursor is not a durable object-key
-checkpoint.
+interrupted long encode or stalled S3 request cannot always take the first turn.
+The next tenant is also saved in the first configured output bucket under
+`.scheduler/`, keyed by a hash of the ordered bucket identities. Fresh cron
+processes therefore rotate tenants too. This object contains only a version and
+tenant index, with no credentials or source keys. Failed coordinator reads or
+writes are reported; the worker falls back to its in-memory tenant order, so
+other output buckets remain usable. Durable fairness across fresh processes
+requires this coordinator bucket to be readable and writable.
+
+Each output bucket also holds one `.transcoder.cursor.json` (or
+`.imagehasher.cursor.json`) with the source identity and last source key. These
+private bookkeeping objects must not be exposed through a public media proxy.
+After the shared budget expires, the next scan resumes after the attempted key,
+including expensive interrupted keys and cached prefixes. Reaching EOF clears
+the source cursor: the following scan wraps, retrying interrupted sources and
+discovering new or changed keys behind the cursor. A parent cancellation or
+SIGTERM saves the last completed key instead, retrying its interrupted source.
+Changing source bucket, endpoint or prefix resets its source cursor. Credential
+rotation does not reset progress.
+
+Source listings must support ordered S3 `ListObjectsV2` with `StartAfter`,
+including a boundary key that was deleted. General-purpose S3 buckets and the
+usual R2/MinIO compatible API provide this contract; S3 directory buckets do not.
+One listing page per active tenant and one cursor per output bound scheduler
+memory/state; the worker does not retain the whole object list.
 
 ## Example: Vora and Kath
 
@@ -100,16 +121,19 @@ ffmpeg processes still consume resources independently.
   locks all remain inside that bucket. There is no cross-tenant deduplication.
 - Each pair holds its existing `.transcoder.lock` while its scan is suspended
   between turns. A busy lock, lock error or scan error skips only that pair.
-- Cleanup runs for a pair after its full source scan completes. It uses that
-  pair's credentials, source prefix and output bucket.
+- Cleanup runs for a pair after its resumed source scan reaches EOF. It performs
+  a separate full-prefix source scan using that pair's credentials and output
+  bucket; processing cursors never narrow the live-reference cleanup check.
 - The runtime budget is shared by every pair and includes in-flight work.
   Set `MAX_RUNTIME_SECONDS × BUDGET_MULTIPLIER` above the longest expected
   single encode; a video that cannot finish within that budget will be retried
-  each sweep. This replaces the previous Go behavior that let an in-flight
+  after its source scan wraps. This replaces the previous Go behavior that let an in-flight
   encode overrun the budget and potentially outlive its lock.
   Its deadline cancels downloads, S3 calls and subprocesses. Interrupted work is
   retried on a later sweep without a failure tombstone; lock release uses a
-  separate bounded context so cancellation does not leave a live lock behind.
+  separate bounded context, shared with cursor persistence, so cancellation does
+  not leave a live lock behind. Finalization can add up to ten seconds beyond
+  the processing budget; allow that margin in the platform runtime limit.
 - Polling and a single Redis wake queue or HTTP `/wake` endpoint wake a full
   sweep of all pairs. Wake requests are coalesced signals, not tenant jobs.
   Tenant-specific queues, wake tokens and per-tenant encode policies are not
@@ -117,8 +141,11 @@ ffmpeg processes still consume resources independently.
 - Ladder, cleanup, re-encode and tombstone options apply to every configured pair.
   Use a separate worker when those policies must differ.
 
-Multi-tenant fairness across sweeps requires daemon mode (poll or wake).
-Repeated one-shot cron processes reset the cursor on every invocation.
+Daemon and one-shot cron workers both resume durable tenant/source progress.
+Destination locks protect media/index changes; the tenant cursor is a scheduling
+hint with last-writer-wins updates if identical workers overlap. Run only one
+worker to enforce the shared CPU/memory budget. Deleting cursor objects safely
+restarts listing from the beginning but temporarily loses scheduling progress.
 
 ## Moving from separate workers
 

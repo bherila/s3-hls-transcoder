@@ -24,6 +24,9 @@ func ScanSource(ctx context.Context, client *s3.Client, bucket string, opts Scan
 			if opts.Prefix != "" {
 				in.Prefix = aws.String(opts.Prefix)
 			}
+			if token == nil && opts.StartAfter != "" {
+				in.StartAfter = aws.String(opts.StartAfter)
+			}
 			out, err := client.ListObjectsV2(ctx, in)
 			if err != nil {
 				yield(SourceObject{}, err)

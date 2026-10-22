@@ -122,7 +122,7 @@ Strict sequence. Steps numbered for cross-reference; side effects called out exp
 
 ### 4.1 Budget exit
 
-The budget is shared across all pairs. The TypeScript worker checks it before each iteration of step 2.2. The Go worker additionally applies a context deadline to in-flight S3 work and subprocesses, releases locks with a separate bounded context, and does not tombstone interrupted sources. The next sweep lists again from the beginning and skips cached mappings; Go daemon mode starts with the pair following the last source attempted.
+The budget is shared across all pairs. The TypeScript worker checks it before each iteration of step 2.2. The Go worker additionally applies a context deadline to in-flight S3 work and subprocesses, releases locks and persists progress with a separate ten-second bounded context, and does not tombstone interrupted sources. Durable tenant rotation starts the next daemon sweep or fresh cron process with the pair following the last turn. Per-destination source checkpoints resume using ordered `ListObjectsV2`/`StartAfter`: budget interruption advances past the attempted source until EOF wraps, while parent cancellation retries the interrupted source. Cleanup always performs its own full-prefix scan. See [multi-tenant operation](./docs/MULTI_TENANT.md) for cursor identity, storage and compatibility.
 
 ### 4.2 Failure handling
 

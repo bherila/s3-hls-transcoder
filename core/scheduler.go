@@ -11,11 +11,12 @@ import (
 type sourceProcessor func(context.Context, pairArgs, SourceObject) (processOutcome, error)
 
 type scheduledPair struct {
-	args pairArgs
-	next func() (SourceObject, error, bool)
-	stop func()
-	lock *LockHandle
-	done bool
+	args                         pairArgs
+	next                         func() (SourceObject, error, bool)
+	stop                         func()
+	lock                         *LockHandle
+	done                         bool
+	lastAttempted, lastCompleted string
 }
 
 // NewTranscoderRunner retains the next tenant between sweeps. Calls on one
@@ -42,20 +43,55 @@ func newRunner(opts OrchestratorOptions, process sourceProcessor, images bool) R
 // runScheduled pulls one source per tenant per round. Iterators retain only a
 // listing page, not the entire bucket. Locks remain held while a pair's scan is
 // suspended, preserving the existing bucket-global index/cleanup invariants.
-func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *int, process sourceProcessor, images bool) RunSummary {
+func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *int, process sourceProcessor, images bool) (sum RunSummary) {
 	cfg, logger := opts.Config, opts.Logger
 	startedAt := time.Now()
 	budget := ComputeBudgetSeconds(cfg.MaxRuntimeSeconds, cfg.BudgetMultiplier)
 	endsAt := startedAt.Add(time.Duration(budget * float64(time.Second)))
 	ctx, cancel := context.WithDeadline(parent, endsAt)
 	defer cancel()
-	sum := RunSummary{TotalPairs: len(cfg.Pairs)}
+	sum = RunSummary{TotalPairs: len(cfg.Pairs)}
+	resume, err := readTenantCheckpoint(ctx, cfg.Pairs, images, *nextPair)
+	if err != nil {
+		sum.Failed++
+		logger.Error("failed to read tenant progress", Fields{"error": err.Error()})
+		resume = *nextPair // A scheduling hint must not disable other tenants.
+	}
+	*nextPair = resume
 	pairs := make([]scheduledPair, len(cfg.Pairs))
 	// Cleanup must have a live context even after the shared deadline or SIGTERM.
 	defer func() {
+		finalize, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
 		for i := range pairs {
-			closeScheduledPair(&pairs[i])
+			p := &pairs[i]
+			if !p.done && p.lock != nil {
+				key := p.lastCompleted
+				if parent.Err() == nil && ctx.Err() == context.DeadlineExceeded {
+					// Budget interruptions advance past the expensive key for one
+					// scan; cancellation instead retries the interrupted source.
+					key = p.lastAttempted
+				}
+				if key != "" {
+					if err := writeSourceCheckpoint(finalize, p.args, images, key); err != nil {
+						sum.Failed++
+						p.args.logger.Error("failed to persist source progress", Fields{"error": err.Error()})
+					}
+				}
+			}
+			closeScheduledPairContext(p, finalize)
 		}
+		if err := writeTenantCheckpoint(finalize, cfg.Pairs, images, *nextPair); err != nil {
+			sum.Failed++
+			logger.Error("failed to persist tenant progress", Fields{"error": err.Error()})
+		}
+		sum.DurationMs = time.Since(startedAt).Milliseconds()
+		logger.Info("run complete", Fields{
+			"processed": sum.Processed, "cached": sum.Cached, "deduped": sum.Deduped,
+			"busy": sum.Busy, "errored": sum.Errored, "failed": sum.Failed,
+			"durationMs": sum.DurationMs, "pairsProcessed": sum.PairsProcessed, "totalPairs": sum.TotalPairs,
+			"interrupted": ctx.Err() != nil,
+		})
 	}()
 	start := 0
 	if len(pairs) > 0 {
@@ -103,7 +139,18 @@ func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *in
 				p.lock = lock
 				sum.PairsProcessed++
 				p.args.logger.Info("starting pair", Fields{"sourceBucket": pair.Source.Bucket, "destBucket": pair.Dest.Bucket})
-				scan := ScanOptions{Prefix: pair.Source.Prefix}
+				resume, err := readSourceCheckpoint(ctx, p.args, images)
+				if err != nil {
+					if ctx.Err() == nil {
+						sum.Failed++
+						p.args.logger.Error("failed to read source progress", Fields{"error": err.Error()})
+					}
+					closeScheduledPair(p)
+					p.done = true
+					remaining--
+					continue
+				}
+				scan := ScanOptions{Prefix: pair.Source.Prefix, StartAfter: resume}
 				if images {
 					scan.Filter = IsImageKey
 				}
@@ -117,7 +164,15 @@ func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *in
 				if err != nil {
 					sum.Failed++
 					p.args.logger.Error("source scan failed", Fields{"error": err.Error()})
-				} else if cfg.CleanupDeletedSources {
+				} else {
+					// EOF wraps the next sweep, including keys changed or added
+					// behind the cursor. Cleanup still scans the entire source.
+					if err := clearSourceCheckpoint(ctx, p.args, images); err != nil && ctx.Err() == nil {
+						sum.Failed++
+						p.args.logger.Error("failed to reset source progress", Fields{"error": err.Error()})
+					}
+				}
+				if err == nil && cfg.CleanupDeletedSources {
 					cleanup := CleanupOptions{
 						SourceClient: p.args.sourceClient, DestClient: p.args.destClient,
 						SourceBucket: p.args.pair.Source.Bucket, SourceEndpoint: p.args.pair.Source.Endpoint,
@@ -140,10 +195,12 @@ func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *in
 				remaining--
 				continue
 			}
+			p.lastAttempted = source.Key
 			outcome, err := process(ctx, p.args, source)
 			if ctx.Err() != nil {
 				break
 			} // interruption is not a bad source
+			p.lastCompleted = source.Key
 			if err != nil {
 				sum.Failed++
 				p.args.logger.Error("source processing failed", Fields{"sourceKey": source.Key, "error": err.Error()})
@@ -166,23 +223,22 @@ func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *in
 			}
 		}
 	}
-	sum.DurationMs = time.Since(startedAt).Milliseconds()
-	logger.Info("run complete", Fields{
-		"processed": sum.Processed, "cached": sum.Cached, "deduped": sum.Deduped,
-		"busy": sum.Busy, "errored": sum.Errored, "failed": sum.Failed,
-		"durationMs": sum.DurationMs, "pairsProcessed": sum.PairsProcessed, "totalPairs": sum.TotalPairs,
-		"interrupted": ctx.Err() != nil,
-	})
 	return sum
 }
 
 func closeScheduledPair(p *scheduledPair) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	closeScheduledPairContext(p, ctx)
+}
+
+func closeScheduledPairContext(p *scheduledPair, ctx context.Context) {
 	if p.stop != nil {
 		p.stop()
 		p.stop = nil
 	}
 	if p.lock != nil {
-		releaseAfterRun(p.lock)
+		p.lock.Release(ctx)
 		p.lock = nil
 	}
 }
