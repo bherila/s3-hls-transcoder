@@ -55,7 +55,7 @@ func ReadRefs(ctx context.Context, client *s3.Client, bucket, contentID string) 
 	if refs == nil {
 		return nil, nil
 	}
-	if refs.Version != 1 {
+	if refs.Version != 1 && refs.Version != 2 {
 		return nil, fmt.Errorf("unsupported refs version %d for %s", refs.Version, contentID)
 	}
 	return refs, nil
@@ -79,8 +79,14 @@ func WriteRefs(ctx context.Context, client *s3.Client, bucket, contentID string,
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
+	version := 1
+	if overflow {
+		// Older v1-only readers must reject incomplete indexes instead of
+		// mistaking the bounded sample for every live reference.
+		version = 2
+	}
 	return putJSONObject(ctx, client, bucket, RefsKey(contentID), ContentRefs{
-		Version: 1, ContentID: contentID, SourceKeys: keys, Overflow: overflow, UpdatedAt: nowISO(),
+		Version: version, ContentID: contentID, SourceKeys: keys, Overflow: overflow, UpdatedAt: nowISO(),
 	})
 }
 

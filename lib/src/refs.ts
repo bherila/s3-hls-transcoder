@@ -70,7 +70,7 @@ export async function readRefs(
     if (isNotFound(err)) return null;
     throw err;
   }
-  if (refs.version !== 1) {
+  if (refs.version !== 1 && refs.version !== 2) {
     throw new Error(`Unsupported refs version ${refs.version} for ${contentId}`);
   }
   return refs;
@@ -97,7 +97,8 @@ export async function writeRefs(
   }
   uniqueKeys.sort();
   const refs: ContentRefs = {
-    version: 1,
+    // v1 readers reject v2, so a rollback cannot trust an incomplete sample.
+    version: overflow ? 2 : 1,
     contentId,
     sourceKeys: uniqueKeys,
     ...(overflow ? { overflow: true } : {}),

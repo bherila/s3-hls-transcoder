@@ -55,7 +55,7 @@ func TestWriteRefsCapsSharedContentIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadRefs: %v", err)
 	}
-	if !refs.Overflow || len(refs.SourceKeys) != maxIndexedRefs {
+	if refs.Version != 2 || !refs.Overflow || len(refs.SourceKeys) != maxIndexedRefs {
 		t.Fatalf("overflow index = %+v, want overflow with %d keys", refs, maxIndexedRefs)
 	}
 	before := fake.getCount("dest", RefsKey(refsContentID))
@@ -64,6 +64,28 @@ func TestWriteRefsCapsSharedContentIndex(t *testing.T) {
 	}
 	if after := fake.getCount("dest", RefsKey(refsContentID)); after != before+1 {
 		t.Fatalf("AddRef performed unexpected index reads: %d -> %d", before, after)
+	}
+}
+
+func TestOverflowRefsScanRetainsAnOmittedLiveMapping(t *testing.T) {
+	fake := &cleanupS3Fake{}
+	client := newCleanupS3Client(t, fake)
+	ctx := context.Background()
+	const omitted = "later/live.mp4"
+	fake.put("dest", RefsKey(refsContentID), ContentRefs{
+		Version: 2, ContentID: refsContentID, Overflow: true, SourceKeys: []string{"early/stale.mp4"},
+	})
+	fake.put("dest", MappingKey(omitted), testMapping(omitted, "source-a", "https://source-a.example.com", refsContentID))
+	keys, err := ListRefs(ctx, client, "dest", refsContentID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(keys, []string{omitted}) {
+		t.Fatalf("lost omitted live reference: %v", keys)
+	}
+	refs, err := ReadRefs(ctx, client, "dest", refsContentID)
+	if err != nil || refs == nil || refs.Version != 1 || refs.Overflow {
+		t.Fatalf("small complete scan should rebuild a v1 index: %+v, %v", refs, err)
 	}
 }
 
