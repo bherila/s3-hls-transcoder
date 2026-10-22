@@ -257,7 +257,7 @@ Each pair JSON object:
 
 **Credential cascade per bucket:** `bucket.accessKeyId` → `pair.accessKeyId` → env var (`SOURCE_ACCESS_KEY_ID` for source side, `DEST_ACCESS_KEY_ID` for dest side). Same for `secretAccessKey` and `region`.
 
-**Overlap validation:** startup refuses to run if any source bucket overlaps with any destination bucket. Two buckets overlap when they share endpoint + bucket name AND one's prefix is a prefix of the other (including the empty prefix). Different endpoints with the same bucket name are _not_ overlap. Source-vs-source sharing is allowed. Destination buckets must be unique per run because mappings are stored under the destination bucket's global `mappings/` namespace.
+**Overlap validation:** startup refuses to run if any source bucket shares endpoint + bucket name with any destination bucket, regardless of configured prefixes: output paths are bucket-global. Different endpoints with the same bucket name are _not_ overlap. Source-vs-source sharing is allowed. Destination buckets must be unique per run because mappings are stored under the destination bucket's global `mappings/` namespace.
 
 | Var                          | Required | Default              | Description                                                                   |
 | ---------------------------- | :------: | -------------------- | ----------------------------------------------------------------------------- |

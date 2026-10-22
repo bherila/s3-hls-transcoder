@@ -23,7 +23,7 @@ Entrypoints depend on `lib` via `workspace:*` and call into it; they only contai
 ## Bucket conventions
 
 - Configuration supports **multiple source/destination pairs** in a single run. TypeScript processes pairs sequentially; Go processes one source per pair per round, with one active pipeline and durable tenant/source progress across runs. Each pair has independent credentials with cascade: bucket-level → pair-level → env-level (`SOURCE_*` / `DEST_*`). See `docs/MULTI_TENANT.md`.
-- **Overlap is rejected at startup**: no source bucket may share endpoint + bucket-name with a dest bucket whose prefix overlaps. Source-vs-source is allowed, but destination buckets must be unique per run because mappings are bucket-global.
+- **Overlap is rejected at startup**: no source bucket may share endpoint + bucket-name with any destination, even with disjoint configured prefixes, because outputs are bucket-global. Source-vs-source is allowed, but destination buckets must be unique per run.
 - Source bucket: **read-only**. Never modify, delete, or move source files.
 - Destination layout (full tree in PLAN.md):
   - `by-id/<scheme>:<id>/` — content-addressed HLS output (v1 scheme is `sha256`)

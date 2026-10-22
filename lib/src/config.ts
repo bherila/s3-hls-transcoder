@@ -226,8 +226,8 @@ function singlePairFromEnv(): BucketPair {
 
 /**
  * Refuses to run if any source bucket overlaps with any destination bucket.
- * Two buckets "overlap" when they share endpoint + bucket name AND one's
- * prefix is a prefix of the other (including empty prefix). Source vs.
+ * Two buckets "overlap" when they share endpoint + bucket name, regardless
+ * of configured prefixes: output paths are bucket-global. Source vs.
  * source sharing is allowed, but destination buckets must be unique within
  * a run because mappings are stored in a bucket-global namespace.
  */
@@ -266,10 +266,7 @@ function validateNoOverlaps(pairs: BucketPair[]): void {
 }
 
 export function bucketsOverlap(a: BucketConfig, b: BucketConfig): boolean {
-  if (!sameBucketLocation(a, b)) return false;
-  const aPrefix = a.prefix ?? "";
-  const bPrefix = b.prefix ?? "";
-  return aPrefix.startsWith(bPrefix) || bPrefix.startsWith(aPrefix);
+  return sameBucketLocation(a, b);
 }
 
 function sameBucketLocation(a: BucketConfig, b: BucketConfig): boolean {

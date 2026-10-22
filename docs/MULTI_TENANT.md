@@ -21,7 +21,9 @@ processes therefore rotate tenants too. This object contains only a version and
 tenant index, with no credentials or source keys. Failed coordinator reads or
 writes are reported; the worker falls back to its in-memory tenant order, so
 other output buckets remain usable. Durable fairness across fresh processes
-requires this coordinator bucket to be readable and writable.
+requires this coordinator bucket to be readable and writable. Its hint read uses
+at most two seconds and one tenth of the shared processing budget, preserving
+time for healthy tenants when it is unavailable.
 
 Each output bucket also holds one `.transcoder.cursor.json` (or
 `.imagehasher.cursor.json`) with the source identity and last source key. These
@@ -119,6 +121,9 @@ ffmpeg processes still consume resources independently.
 - Every output bucket must be distinct, even when destination prefixes differ.
   Mappings, content hashes, reverse references, fingerprints, tombstones and
   locks all remain inside that bucket. There is no cross-tenant deduplication.
+- No output bucket may share endpoint + bucket name with any source bucket.
+  Disjoint configured prefixes do not make this safe: actual output paths are
+  bucket-global, and startup rejects this configuration in both Go and TypeScript.
 - Each pair holds its existing `.transcoder.lock` while its scan is suspended
   between turns. A busy lock, lock error or scan error skips only that pair.
 - Cleanup runs for a pair after its resumed source scan reaches EOF. It performs
@@ -131,9 +136,13 @@ ffmpeg processes still consume resources independently.
   encode overrun the budget and potentially outlive its lock.
   Its deadline cancels downloads, S3 calls and subprocesses. Interrupted work is
   retried on a later sweep without a failure tombstone; lock release uses a
-  separate bounded context, shared with cursor persistence, so cancellation does
-  not leave a live lock behind. Finalization can add up to ten seconds beyond
-  the processing budget; allow that margin in the platform runtime limit.
+  separate bounded contexts. Scheduler finalization allocates up to five seconds
+  to progress writes and reserves up to five more for individual lock-release
+  attempts, so an unavailable destination does not consume every release's
+  context. A failed release safely leaves its lock to expire. Scheduler
+  finalization can add up to ten seconds beyond the processing budget, and a
+  per-video lease release separately permits up to ten seconds. Allow these
+  margins in the platform runtime limit; retain the default budget/TTL headroom.
 - Polling and a single Redis wake queue or HTTP `/wake` endpoint wake a full
   sweep of all pairs. Wake requests are coalesced signals, not tenant jobs.
   Tenant-specific queues, wake tokens and per-tenant encode policies are not

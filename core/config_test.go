@@ -23,7 +23,7 @@ func TestBucketsOverlap(t *testing.T) {
 		{"same, no prefixes", base, base, true},
 		{"prefix subsumes a→b", with(func(c *BucketConfig) { c.Prefix = "uploads/" }), with(func(c *BucketConfig) { c.Prefix = "uploads/transcoded/" }), true},
 		{"prefix subsumes b→a", with(func(c *BucketConfig) { c.Prefix = "uploads/transcoded/" }), with(func(c *BucketConfig) { c.Prefix = "uploads/" }), true},
-		{"disjoint prefixes", with(func(c *BucketConfig) { c.Prefix = "uploads/" }), with(func(c *BucketConfig) { c.Prefix = "transcoded/" }), false},
+		{"disjoint prefixes still share bucket-global output", with(func(c *BucketConfig) { c.Prefix = "uploads/" }), with(func(c *BucketConfig) { c.Prefix = "transcoded/" }), true},
 		{"empty prefix subsumes", base, with(func(c *BucketConfig) { c.Prefix = "anything/" }), true},
 		{"endpoint case-insensitive", with(func(c *BucketConfig) { c.Endpoint = "https://R2.Example.Com" }), base, true},
 		{"endpoint trailing slash", with(func(c *BucketConfig) { c.Endpoint = "https://r2.example.com/" }), base, true},
@@ -31,6 +31,19 @@ func TestBucketsOverlap(t *testing.T) {
 	for _, c := range cases {
 		if got := BucketsOverlap(c.a, c.b); got != c.want {
 			t.Errorf("%s: BucketsOverlap = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestLoadConfigRejectsSameBucketWithDisjointPrefixes(t *testing.T) {
+	t.Setenv("BUCKETS_CONFIG_FILE", "")
+	for _, config := range []string{
+		`[{"source":{"bucket":"shared","endpoint":"https://r2.example.com","prefix":"by-id/"},"dest":{"bucket":"shared","endpoint":"https://R2.Example.com/","prefix":"encoded/"},"accessKeyId":"ak","secretAccessKey":"sk"}]`,
+		`[{"source":{"bucket":"shared","endpoint":"https://r2.example.com","prefix":"by-id/"},"dest":{"bucket":"output-a","endpoint":"https://r2.example.com"},"accessKeyId":"ak","secretAccessKey":"sk"},{"source":{"bucket":"source-b","endpoint":"https://r2.example.com"},"dest":{"bucket":"shared","endpoint":"https://r2.example.com","prefix":"encoded/"},"accessKeyId":"ak","secretAccessKey":"sk"}]`,
+	} {
+		t.Setenv("BUCKETS_CONFIG", config)
+		if _, err := LoadConfig(PlatformLocal); err == nil || !strings.Contains(err.Error(), "source and destination must be disjoint") {
+			t.Fatalf("expected same-bucket inputs/outputs to fail closed, got %v", err)
 		}
 	}
 }

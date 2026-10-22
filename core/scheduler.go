@@ -51,7 +51,9 @@ func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *in
 	ctx, cancel := context.WithDeadline(parent, endsAt)
 	defer cancel()
 	sum = RunSummary{TotalPairs: len(cfg.Pairs)}
-	resume, err := readTenantCheckpoint(ctx, cfg.Pairs, images, *nextPair)
+	hintCtx, stopHint := context.WithTimeout(ctx, min(2*time.Second, time.Until(endsAt)/10))
+	resume, err := readTenantCheckpoint(hintCtx, cfg.Pairs, images, *nextPair)
+	stopHint()
 	if err != nil {
 		sum.Failed++
 		logger.Error("failed to read tenant progress", Fields{"error": err.Error()})
@@ -61,30 +63,8 @@ func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *in
 	pairs := make([]scheduledPair, len(cfg.Pairs))
 	// Cleanup must have a live context even after the shared deadline or SIGTERM.
 	defer func() {
-		finalize, stop := context.WithTimeout(context.Background(), 10*time.Second)
-		defer stop()
-		for i := range pairs {
-			p := &pairs[i]
-			if !p.done && p.lock != nil {
-				key := p.lastCompleted
-				if parent.Err() == nil && ctx.Err() == context.DeadlineExceeded {
-					// Budget interruptions advance past the expensive key for one
-					// scan; cancellation instead retries the interrupted source.
-					key = p.lastAttempted
-				}
-				if key != "" {
-					if err := writeSourceCheckpoint(finalize, p.args, images, key); err != nil {
-						sum.Failed++
-						p.args.logger.Error("failed to persist source progress", Fields{"error": err.Error()})
-					}
-				}
-			}
-			closeScheduledPairContext(p, finalize)
-		}
-		if err := writeTenantCheckpoint(finalize, cfg.Pairs, images, *nextPair); err != nil {
-			sum.Failed++
-			logger.Error("failed to persist tenant progress", Fields{"error": err.Error()})
-		}
+		advance := parent.Err() == nil && ctx.Err() == context.DeadlineExceeded
+		sum.Failed += finalizeScheduledPairs(pairs, cfg.Pairs, images, *nextPair, advance, logger, 10*time.Second)
 		sum.DurationMs = time.Since(startedAt).Milliseconds()
 		logger.Info("run complete", Fields{
 			"processed": sum.Processed, "cached": sum.Cached, "deduped": sum.Deduped,
@@ -145,7 +125,7 @@ func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *in
 						sum.Failed++
 						p.args.logger.Error("failed to read source progress", Fields{"error": err.Error()})
 					}
-					closeScheduledPair(p)
+					stopScheduledPair(p)
 					p.done = true
 					remaining--
 					continue
@@ -190,7 +170,7 @@ func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *in
 						p.args.logger.Error("cleanup pass failed", Fields{"error": cleanupErr.Error()})
 					}
 				}
-				closeScheduledPair(p)
+				stopScheduledPair(p)
 				p.done = true
 				remaining--
 				continue
@@ -226,17 +206,57 @@ func runScheduled(parent context.Context, opts OrchestratorOptions, nextPair *in
 	return sum
 }
 
-func closeScheduledPair(p *scheduledPair) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	closeScheduledPairContext(p, ctx)
+// Reserve half the finalization budget for independent release attempts. A
+// stalled checkpoint write or earlier release cannot consume another lock's
+// entire allowance. The total sequential allowance stays within budget.
+func finalizeScheduledPairs(pairs []scheduledPair, configured []BucketPair, images bool, next int, advance bool, logger *Logger, budget time.Duration) int {
+	failed := 0
+	progressSlice := min(2*time.Second, budget/2/time.Duration(len(pairs)+1))
+	for i := range pairs {
+		p := &pairs[i]
+		stopScheduledPair(p)
+		if p.done || p.lock == nil {
+			continue
+		}
+		key := p.lastCompleted
+		if advance {
+			key = p.lastAttempted
+		}
+		if key != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), progressSlice)
+			err := writeSourceCheckpoint(ctx, p.args, images, key)
+			cancel()
+			if err != nil {
+				failed++
+				p.args.logger.Error("failed to persist source progress", Fields{"error": err.Error()})
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), progressSlice)
+	err := writeTenantCheckpoint(ctx, configured, images, next)
+	cancel()
+	if err != nil {
+		failed++
+		logger.Error("failed to persist tenant progress", Fields{"error": err.Error()})
+	}
+	releaseSlice := min(2*time.Second, budget/2/time.Duration(max(1, len(pairs))))
+	for i := range pairs {
+		ctx, cancel := context.WithTimeout(context.Background(), releaseSlice)
+		closeScheduledPairContext(&pairs[i], ctx)
+		cancel()
+	}
+	return failed
 }
 
-func closeScheduledPairContext(p *scheduledPair, ctx context.Context) {
+func stopScheduledPair(p *scheduledPair) {
 	if p.stop != nil {
 		p.stop()
 		p.stop = nil
 	}
+}
+
+func closeScheduledPairContext(p *scheduledPair, ctx context.Context) {
+	stopScheduledPair(p)
 	if p.lock != nil {
 		p.lock.Release(ctx)
 		p.lock = nil

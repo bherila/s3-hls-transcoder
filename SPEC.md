@@ -20,7 +20,7 @@ If `SOURCE_PREFIX` (single-pair) or `source.prefix` (multi-pair) is set, only ke
 
 ### 1.2 Destination bucket
 
-The destination bucket **must not overlap** with any source bucket. Overlap is defined as: same endpoint host (URL-normalized: lowercased scheme+host) AND same bucket name AND one prefix is a prefix of the other (the empty prefix is a prefix of every prefix). Overlap is detected at startup and refuses to run.
+The destination bucket **must not overlap** with any source bucket. Overlap means the same endpoint (URL-normalized: lowercased scheme+host) AND bucket name, regardless of configured prefixes: output paths use the bucket-global namespace. Startup rejects both same-pair and cross-pair overlap.
 
 Source-vs-source and dest-vs-dest sharing _is_ allowed.
 

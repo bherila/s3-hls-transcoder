@@ -16,7 +16,10 @@ REQUIRE_FFMPEG=1 go test ./... -race
 credentials and bucket routing, shared deadlines, fresh-cron tenant rotation,
 durable progress beyond cached/interrupted sources, deleted cursor keys,
 eventual wrap/ETag changes, cancellation retries and lock/scan failure isolation
-against a local S3 HTTP fake. No live buckets are used.
+against a local S3 HTTP fake. Stalled coordinator reads preserve healthy tenant
+processing, and stalled progress writes/releases retain other locks' release
+allowances. Go and TypeScript configuration tests reject same-bucket input/output
+even with disjoint prefixes. No live buckets are used.
 
 ```bash
 pnpm test          # all packages (lib + entrypoints)

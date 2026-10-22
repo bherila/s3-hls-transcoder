@@ -37,7 +37,7 @@ Each package has its own README with platform-specific setup. Configuration is v
 - **Node.js 22+**
 - **pnpm 12.11.2** (`npm install -g pnpm@12.11.2`, or via Corepack)
 - **ffmpeg** on `PATH` (only needed for the `local` entrypoint; the `aws` and `cloudflare` Dockerfiles vendor it)
-- An **S3-compatible source bucket** (R2, S3, MinIO, …) with at least one video, and a **separate** destination bucket. Source and destination must not overlap (same endpoint + bucket name with overlapping prefixes is rejected at startup).
+- An **S3-compatible source bucket** (R2, S3, MinIO, …) with at least one video, and a **separate** destination bucket. Startup rejects source/destination sharing the same endpoint + bucket name, even with disjoint configured prefixes, because output paths are bucket-global.
 
 ## First-time setup
 

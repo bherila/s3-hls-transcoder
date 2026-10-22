@@ -16,12 +16,14 @@ import (
 )
 
 type schedulerS3 struct {
-	mu                 sync.Mutex
-	locks              map[string][]byte
-	objects            map[string][]string
-	failLock, failScan string
-	stallScan          string
-	etags              map[string]string
+	mu                                         sync.Mutex
+	locks                                      map[string][]byte
+	objects                                    map[string][]string
+	failLock, failScan                         string
+	stallScan                                  string
+	etags                                      map[string]string
+	stallCoordinatorRead, stallCheckpointWrite bool
+	stallLockRead                              string
 }
 
 func schedulerFixture(t *testing.T) (OrchestratorOptions, *schedulerS3) {
@@ -30,11 +32,24 @@ func schedulerFixture(t *testing.T) (OrchestratorOptions, *schedulerS3) {
 		"source-a": {"videos/first.mp4", "videos/second.mp4", "videos/third.mp4"},
 		"source-b": {"videos/first.mp4", "videos/second.mp4"},
 	}}
+	stop := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		bucket := strings.SplitN(path, "/", 2)[0]
+		if (f.stallCoordinatorRead && r.Method == http.MethodGet && strings.Contains(path, "/.scheduler/")) ||
+			(f.stallCheckpointWrite && r.Method == http.MethodPut && (strings.Contains(path, "/.scheduler/") || strings.HasSuffix(path, ".cursor.json"))) ||
+			(f.stallLockRead == bucket && r.Method == http.MethodGet && strings.HasSuffix(path, "/"+GlobalLockKey)) {
+			f.mu.Unlock()
+			_, _ = io.Copy(io.Discard, r.Body)
+			select {
+			case <-r.Context().Done():
+			case <-stop:
+			}
+			f.mu.Lock()
+			return
+		}
 		// Each tenant has different credentials, including on the same endpoint.
 		suffix := bucket[len(bucket)-1:]
 		if !strings.Contains(r.Header.Get("Authorization"), "Credential=key-"+suffix+"/") {
@@ -97,7 +112,10 @@ func schedulerFixture(t *testing.T) (OrchestratorOptions, *schedulerS3) {
 			w.WriteHeader(http.StatusNoContent)
 		}
 	}))
-	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		close(stop)
+		server.Close()
+	})
 	var pairs []BucketPair
 	for _, suffix := range []string{"a", "b"} {
 		source := BucketConfig{Bucket: "source-" + suffix, Endpoint: server.URL, AccessKeyID: "key-" + suffix, SecretAccessKey: "secret-" + suffix, Region: "auto", Prefix: "videos/"}
@@ -374,6 +392,50 @@ func TestSchedulerTenantCheckpointIdentityAndValidation(t *testing.T) {
 	f.locks[pairs[0].Dest.Bucket+"/"+key] = []byte(`{"version":1,"nextPair":99}`)
 	if _, err := readTenantCheckpoint(context.Background(), pairs, false, 0); err == nil {
 		t.Fatal("accepted an out-of-range tenant index")
+	}
+}
+
+func TestSchedulerStalledCoordinatorReadStillProcessesHealthyTenants(t *testing.T) {
+	opts, f := schedulerFixture(t)
+	f.stallCoordinatorRead = true
+	opts.Config.MaxRuntimeSeconds, opts.Config.BudgetMultiplier = 1, 1
+	var healthy int
+	sum := newRunner(opts, func(_ context.Context, a pairArgs, _ SourceObject) (processOutcome, error) {
+		if a.pair.Name == "b" {
+			healthy++
+		}
+		return outcomeCached, nil
+	}, false)(context.Background())
+	if healthy != 2 || sum.Failed != 1 {
+		t.Fatalf("stalled scheduling hint exhausted processing budget: healthy=%d summary=%+v", healthy, sum)
+	}
+	assertSchedulerLocksReleased(t, f)
+}
+
+func TestSchedulerStalledProgressAndLockReleaseLeaveOtherReleaseAllowance(t *testing.T) {
+	opts, f := schedulerFixture(t)
+	var pairs []scheduledPair
+	for _, pair := range opts.Config.Pairs {
+		a := pairArgs{pair: pair, destClient: NewS3Client(pair.Dest), logger: opts.Logger}
+		lock, err := AcquireLock(context.Background(), AcquireOptions{Client: a.destClient, Bucket: pair.Dest.Bucket, MaxRuntimeSeconds: 60, LockTTLSeconds: 90, Logger: opts.Logger})
+		if err != nil || lock == nil {
+			t.Fatalf("acquire fixture lock: %v", err)
+		}
+		pairs = append(pairs, scheduledPair{args: a, lock: lock, lastCompleted: "videos/first.mp4"})
+	}
+	f.stallCheckpointWrite = true
+	f.stallLockRead = "dest-a"
+	failed := finalizeScheduledPairs(pairs, opts.Config.Pairs, false, 1, false, opts.Logger, 200*time.Millisecond)
+	if failed != 3 {
+		t.Fatalf("expected all three failed progress writes, got %d", failed)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, exists := f.locks["dest-b/"+GlobalLockKey]; exists {
+		t.Fatal("stalled progress writes/earlier release exhausted healthy lock's release context")
+	}
+	if _, exists := f.locks["dest-a/"+GlobalLockKey]; !exists {
+		t.Fatal("blocked release should leave its lock to expire safely")
 	}
 }
 

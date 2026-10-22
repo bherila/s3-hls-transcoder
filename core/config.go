@@ -324,13 +324,10 @@ func validateNoOverlaps(pairs []BucketPair) error {
 	return nil
 }
 
-// BucketsOverlap reports whether two buckets share endpoint + name and one
-// prefix is a prefix of the other (the empty prefix subsumes everything).
+// BucketsOverlap reports whether two buckets share endpoint + name. Output
+// paths are bucket-global, so destination prefixes cannot isolate source data.
 func BucketsOverlap(a, b BucketConfig) bool {
-	if !sameBucketLocation(a, b) {
-		return false
-	}
-	return strings.HasPrefix(a.Prefix, b.Prefix) || strings.HasPrefix(b.Prefix, a.Prefix)
+	return sameBucketLocation(a, b)
 }
 
 func sameBucketLocation(a, b BucketConfig) bool {
