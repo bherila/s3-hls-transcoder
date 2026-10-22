@@ -272,8 +272,11 @@ func TestWorkersCacheSameSourceKeyInDedicatedBuckets(t *testing.T) {
 			}
 			f.mu.Lock()
 			defer f.mu.Unlock()
-			if len(f.locks) != 2 {
-				t.Fatalf("expected only two original mappings, got %v", f.locks)
+			if len(f.locks) != 3 {
+				t.Fatalf("expected two original mappings and one tenant cursor, got %d objects", len(f.locks))
+			}
+			if _, ok := f.locks["dest-a/"+tenantCheckpointKey(opts.Config.Pairs, images)]; !ok {
+				t.Fatal("missing tenant cursor")
 			}
 		})
 	}
