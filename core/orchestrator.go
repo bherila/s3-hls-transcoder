@@ -38,52 +38,11 @@ const (
 	outcomeTombstoned
 )
 
-// RunOnce processes all configured bucket pairs sequentially, sharing the
-// runtime budget. Each pair takes its own dest-bucket lock; a lock collision
-// skips that pair, not the rest.
+// RunOnce runs one fair, globally serial sweep of the configured bucket pairs.
+// Daemons should use NewTranscoderRunner to retain their next-tenant cursor.
 func RunOnce(ctx context.Context, opts OrchestratorOptions) RunSummary {
-	cfg, logger := opts.Config, opts.Logger
-	startedAt := time.Now()
-
-	lockTTL := ComputeLockTTLSeconds(cfg.MaxRuntimeSeconds, cfg.LockTTLMultiplier)
-	budget := ComputeBudgetSeconds(cfg.MaxRuntimeSeconds, cfg.BudgetMultiplier)
-	budgetEndsAt := startedAt.Add(time.Duration(budget) * time.Second)
-
-	var sum RunSummary
-	sum.TotalPairs = len(cfg.Pairs)
-
-	for i := range cfg.Pairs {
-		pair := cfg.Pairs[i]
-		if time.Now().After(budgetEndsAt) {
-			logger.Info("budget exhausted before processing remaining pairs", Fields{"completedPairs": i, "totalPairs": len(cfg.Pairs)})
-			break
-		}
-		sourceClient := NewS3Client(pair.Source)
-		destClient := NewS3Client(pair.Dest)
-
-		res, acquired := runPair(ctx, pairArgs{
-			pair: pair, cfg: cfg, logger: logger,
-			sourceClient: sourceClient, destClient: destClient,
-			lockTTLSeconds: lockTTL, budgetEndsAt: budgetEndsAt, pairIndex: i,
-		})
-		sum.Processed += res.Processed
-		sum.Cached += res.Cached
-		sum.Deduped += res.Deduped
-		sum.Busy += res.Busy
-		sum.Errored += res.Errored
-		sum.Failed += res.Failed
-		if acquired {
-			sum.PairsProcessed++
-		}
-	}
-
-	sum.DurationMs = time.Since(startedAt).Milliseconds()
-	logger.Info("run complete", Fields{
-		"processed": sum.Processed, "cached": sum.Cached, "deduped": sum.Deduped,
-		"busy": sum.Busy, "errored": sum.Errored, "failed": sum.Failed,
-		"durationMs": sum.DurationMs, "pairsProcessed": sum.PairsProcessed, "totalPairs": sum.TotalPairs,
-	})
-	return sum
+	next := 0
+	return runScheduled(ctx, opts, &next, processSource, false)
 }
 
 type pairArgs struct {
@@ -93,79 +52,6 @@ type pairArgs struct {
 	sourceClient   *s3.Client
 	destClient     *s3.Client
 	lockTTLSeconds float64
-	budgetEndsAt   time.Time
-	pairIndex      int
-}
-
-type pairResult struct {
-	Processed, Cached, Deduped, Busy, Errored, Failed int
-}
-
-func runPair(ctx context.Context, a pairArgs) (pairResult, bool) {
-	var res pairResult
-	lock, err := AcquireLock(ctx, AcquireOptions{
-		Client: a.destClient, Bucket: a.pair.Dest.Bucket, Platform: a.cfg.Platform,
-		MaxRuntimeSeconds: a.cfg.MaxRuntimeSeconds, LockTTLSeconds: a.lockTTLSeconds, Logger: a.logger,
-	})
-	if err != nil {
-		res.Failed++
-		a.logger.Error("failed to acquire pair lock", Fields{"pairIndex": a.pairIndex, "error": err.Error()})
-		return res, false
-	}
-	if lock == nil {
-		return res, false
-	}
-	defer lock.Release(ctx)
-
-	a.logger.Info("starting pair", Fields{
-		"pairIndex": a.pairIndex, "sourceBucket": a.pair.Source.Bucket, "destBucket": a.pair.Dest.Bucket,
-	})
-
-	scanOpts := ScanOptions{Prefix: a.pair.Source.Prefix}
-	for source, err := range ScanSource(ctx, a.sourceClient, a.pair.Source.Bucket, scanOpts) {
-		if err != nil {
-			res.Failed++
-			a.logger.Error("source scan failed", Fields{"pairIndex": a.pairIndex, "error": err.Error()})
-			break
-		}
-		if time.Now().After(a.budgetEndsAt) {
-			a.logger.Info("budget exhausted in pair", Fields{"pairIndex": a.pairIndex})
-			break
-		}
-
-		outcome, perr := processSource(ctx, a, source)
-		if perr != nil {
-			res.Failed++
-			a.logger.Error("source processing failed", Fields{"pairIndex": a.pairIndex, "sourceKey": source.Key, "error": perr.Error()})
-			if a.cfg.ErrorTombstones {
-				writeFailureTombstone(ctx, a, source, perr)
-			}
-			continue
-		}
-		switch outcome {
-		case outcomeTranscoded:
-			res.Processed++
-		case outcomeDeduped:
-			res.Deduped++
-		case outcomeCached:
-			res.Cached++
-		case outcomeLeaseBusy:
-			res.Busy++
-		case outcomeTombstoned:
-			res.Errored++
-		}
-	}
-
-	if a.cfg.CleanupDeletedSources && time.Now().Before(a.budgetEndsAt) {
-		if _, err := RunCleanupPass(ctx, CleanupOptions{
-			SourceClient: a.sourceClient, DestClient: a.destClient,
-			SourceBucket: a.pair.Source.Bucket, SourceEndpoint: a.pair.Source.Endpoint, DestBucket: a.pair.Dest.Bucket,
-			SourcePrefix: a.pair.Source.Prefix, Logger: a.logger, DryRun: a.cfg.CleanupDryRun,
-		}); err != nil {
-			a.logger.Error("cleanup pass failed", Fields{"pairIndex": a.pairIndex, "error": err.Error()})
-		}
-	}
-	return res, true
 }
 
 func processSource(ctx context.Context, a pairArgs, source SourceObject) (processOutcome, error) {
@@ -258,7 +144,7 @@ func processSource(ctx context.Context, a pairArgs, source SourceObject) (proces
 		a.logger.Info("per-video lease busy; skipping", Fields{"sourceKey": source.Key, "contentId": contentID})
 		return outcomeLeaseBusy, nil
 	}
-	defer lease.Release(ctx)
+	defer releaseAfterRun(lease)
 
 	// 6. Probe.
 	probe, err := ProbeSource(ctx, localSource)

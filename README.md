@@ -27,6 +27,9 @@ wake on Redis or an HTTP endpoint — see `core.Serve` and
   decisioning stays in the consuming app. Requires the `pdq-photo-hasher` binary
   on `PATH` (or `PDQ_HASHER_PATH`); see [`Dockerfile.imagehasher`](./Dockerfile.imagehasher).
 
+For a single resource-limited Go worker serving independent bucket pairs, see
+[Multi-tenant operation](./docs/MULTI_TENANT.md).
+
 Each package has its own README with platform-specific setup. Configuration is via environment variables; see [`local/.env.sample`](./local/.env.sample) for the canonical list.
 
 ## Prerequisites
@@ -34,7 +37,7 @@ Each package has its own README with platform-specific setup. Configuration is v
 - **Node.js 22+**
 - **pnpm 12.11.2** (`npm install -g pnpm@12.11.2`, or via Corepack)
 - **ffmpeg** on `PATH` (only needed for the `local` entrypoint; the `aws` and `cloudflare` Dockerfiles vendor it)
-- An **S3-compatible source bucket** (R2, S3, MinIO, …) with at least one video, and a **separate** destination bucket. Source and destination must not overlap (same endpoint + bucket name with overlapping prefixes is rejected at startup).
+- An **S3-compatible source bucket** (R2, S3, MinIO, …) with at least one video, and a **separate** destination bucket. Startup rejects source/destination sharing the same endpoint + bucket name, even with disjoint configured prefixes, because output paths are bucket-global.
 
 ## First-time setup
 

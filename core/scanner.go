@@ -16,6 +16,8 @@ type SourceObject struct {
 // ScanOptions controls source-bucket scanning.
 type ScanOptions struct {
 	Prefix string
+	// StartAfter resumes an ordered S3 listing exclusively after this key.
+	StartAfter string
 	// Filter overrides the default video-extension filter. Used by the cleanup
 	// pass to enumerate every key.
 	Filter func(key string) bool

@@ -23,7 +23,7 @@ func TestBucketsOverlap(t *testing.T) {
 		{"same, no prefixes", base, base, true},
 		{"prefix subsumes a→b", with(func(c *BucketConfig) { c.Prefix = "uploads/" }), with(func(c *BucketConfig) { c.Prefix = "uploads/transcoded/" }), true},
 		{"prefix subsumes b→a", with(func(c *BucketConfig) { c.Prefix = "uploads/transcoded/" }), with(func(c *BucketConfig) { c.Prefix = "uploads/" }), true},
-		{"disjoint prefixes", with(func(c *BucketConfig) { c.Prefix = "uploads/" }), with(func(c *BucketConfig) { c.Prefix = "transcoded/" }), false},
+		{"disjoint prefixes still share bucket-global output", with(func(c *BucketConfig) { c.Prefix = "uploads/" }), with(func(c *BucketConfig) { c.Prefix = "transcoded/" }), true},
 		{"empty prefix subsumes", base, with(func(c *BucketConfig) { c.Prefix = "anything/" }), true},
 		{"endpoint case-insensitive", with(func(c *BucketConfig) { c.Endpoint = "https://R2.Example.Com" }), base, true},
 		{"endpoint trailing slash", with(func(c *BucketConfig) { c.Endpoint = "https://r2.example.com/" }), base, true},
@@ -31,6 +31,19 @@ func TestBucketsOverlap(t *testing.T) {
 	for _, c := range cases {
 		if got := BucketsOverlap(c.a, c.b); got != c.want {
 			t.Errorf("%s: BucketsOverlap = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestLoadConfigRejectsSameBucketWithDisjointPrefixes(t *testing.T) {
+	t.Setenv("BUCKETS_CONFIG_FILE", "")
+	for _, config := range []string{
+		`[{"source":{"bucket":"shared","endpoint":"https://r2.example.com","prefix":"by-id/"},"dest":{"bucket":"shared","endpoint":"https://R2.Example.com/","prefix":"encoded/"},"accessKeyId":"ak","secretAccessKey":"sk"}]`,
+		`[{"source":{"bucket":"shared","endpoint":"https://r2.example.com","prefix":"by-id/"},"dest":{"bucket":"output-a","endpoint":"https://r2.example.com"},"accessKeyId":"ak","secretAccessKey":"sk"},{"source":{"bucket":"source-b","endpoint":"https://r2.example.com"},"dest":{"bucket":"shared","endpoint":"https://r2.example.com","prefix":"encoded/"},"accessKeyId":"ak","secretAccessKey":"sk"}]`,
+	} {
+		t.Setenv("BUCKETS_CONFIG", config)
+		if _, err := LoadConfig(PlatformLocal); err == nil || !strings.Contains(err.Error(), "source and destination must be disjoint") {
+			t.Fatalf("expected same-bucket inputs/outputs to fail closed, got %v", err)
 		}
 	}
 }
@@ -99,6 +112,31 @@ func TestLadderRungNamesMustBePublishable(t *testing.T) {
 	for _, bad := range []string{"mobile~360p", "360 p", "../360p", "a/./b", "/360p", "360p%v"} {
 		if _, err := parseLadder(rung(bad)); err == nil {
 			t.Errorf("%q should be rejected at startup", bad)
+		}
+	}
+}
+
+func TestLoadConfigTenantLabels(t *testing.T) {
+	t.Setenv("BUCKETS_CONFIG_FILE", "")
+	t.Setenv("BUCKETS_CONFIG", `[
+        {"name":"vora","source":{"bucket":"src-a","endpoint":"https://r2.example.com"},"dest":{"bucket":"dest-a","endpoint":"https://r2.example.com"},"accessKeyId":"ak-a","secretAccessKey":"sk-a"},
+        {"name":"kath","source":{"bucket":"src-b","endpoint":"https://r2.example.com"},"dest":{"bucket":"dest-b","endpoint":"https://r2.example.com"},"accessKeyId":"ak-b","secretAccessKey":"sk-b"}
+    ]`)
+	cfg, err := LoadConfig(PlatformLocal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Pairs[0].Name != "vora" || cfg.Pairs[1].Name != "kath" {
+		t.Fatalf("tenant labels lost")
+	}
+	if cfg.Pairs[0].Dest.AccessKeyID != "ak-a" || cfg.Pairs[1].Dest.AccessKeyID != "ak-b" {
+		t.Fatal("tenant credentials mixed")
+	}
+	for _, name := range []string{"vora", " kath "} {
+		pairs := append([]BucketPair(nil), cfg.Pairs...)
+		pairs[1].Name = name
+		if err := validateNoOverlaps(pairs); err == nil {
+			t.Fatalf("invalid tenant label %q accepted", name)
 		}
 	}
 }

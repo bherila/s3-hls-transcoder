@@ -39,10 +39,10 @@ describe("bucketsOverlap", () => {
     expect(bucketsOverlap(b, a)).toBe(true);
   });
 
-  it("disjoint prefixes → not overlap", () => {
+  it("disjoint prefixes still share bucket-global output", () => {
     const a: BucketConfig = { ...base, prefix: "uploads/" };
     const b: BucketConfig = { ...base, prefix: "transcoded/" };
-    expect(bucketsOverlap(a, b)).toBe(false);
+    expect(bucketsOverlap(a, b)).toBe(true);
   });
 
   it("empty prefix subsumes any other prefix → overlap", () => {
@@ -65,6 +65,26 @@ describe("bucketsOverlap", () => {
 });
 
 describe("loadConfig destination validation", () => {
+  it.each([false, true])(
+    "rejects same-bucket source/output even with disjoint prefixes (cross-pair=%s)",
+    (crossPair) => {
+      const source = { bucket: "shared", endpoint: "https://r2.example.com", prefix: "by-id/" };
+      const dest = { bucket: "shared", endpoint: "https://R2.Example.com/", prefix: "encoded/" };
+      const credentials = { accessKeyId: "ak", secretAccessKey: "sk" };
+      process.env.BUCKETS_CONFIG_FILE = "";
+      process.env.BUCKETS_CONFIG = JSON.stringify(
+        crossPair
+          ? [
+              { source, dest: { ...dest, bucket: "output-a" }, ...credentials },
+              { source: { ...source, bucket: "source-b" }, dest, ...credentials },
+            ]
+          : [{ source, dest, ...credentials }],
+      );
+
+      expect(() => loadConfig("local")).toThrow(/Source and destination must be disjoint/);
+    },
+  );
+
   it("rejects multiple pairs that share the same destination bucket namespace", () => {
     process.env.BUCKETS_CONFIG = JSON.stringify([
       {

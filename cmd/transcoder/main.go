@@ -43,9 +43,7 @@ func main() {
 		WakeHTTPAddr:    os.Getenv("WAKE_HTTP_ADDR"),
 		WakeHTTPToken:   os.Getenv("WAKE_HTTP_TOKEN"),
 		FallbackSeconds: envInt("POLL_FALLBACK_SECONDS", 0),
-		Run: func(ctx context.Context) core.RunSummary {
-			return core.RunOnce(ctx, core.OrchestratorOptions{Config: cfg, Logger: logger})
-		},
+		Run:             core.NewTranscoderRunner(core.OrchestratorOptions{Config: cfg, Logger: logger}),
 	}
 
 	sum, err := core.Serve(ctx, opts)

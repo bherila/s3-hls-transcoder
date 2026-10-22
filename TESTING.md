@@ -4,6 +4,23 @@ Testing guide for `s3-hls-transcoder`. See [CLAUDE.md](./CLAUDE.md) for project 
 
 ## Running tests
 
+For the Go worker images (including multi-tenant scheduling), run:
+
+```bash
+go vet ./...
+go build ./...
+REQUIRE_FFMPEG=1 go test ./... -race
+```
+
+`core/scheduler_test.go` exercises round-robin order, independent tenant
+credentials and bucket routing, shared deadlines, fresh-cron tenant rotation,
+durable progress beyond cached/interrupted sources, deleted cursor keys,
+eventual wrap/ETag changes, cancellation retries and lock/scan failure isolation
+against a local S3 HTTP fake. Stalled coordinator reads preserve healthy tenant
+processing, and stalled progress writes/releases retain other locks' release
+allowances. Go and TypeScript configuration tests reject same-bucket input/output
+even with disjoint prefixes. No live buckets are used.
+
 ```bash
 pnpm test          # all packages (lib + entrypoints)
 pnpm -C lib test   # lib only
