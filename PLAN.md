@@ -132,13 +132,13 @@ Client lookup: `GET <bucket>/mappings/<source-path>.json` → read `hlsRoot` →
 }
 ```
 
-Without it, deciding whether one content ID is still referenced costs a GET of every mapping in the bucket. With it, it costs one GET.
+Without it, deciding whether one content ID is still referenced costs a GET of every mapping in the bucket. A complete index costs one GET. Indexes retain at most 1,000 unique keys; more highly shared content uses `version: 2` and `overflow: true`, whose sampled keys are never authoritative. Readers scan the full `mappings/` tree for overflowed indexes instead. Small complete indexes keep `version: 1`. Older v1-only workers reject overflowed v2 indexes and fail closed; upgrade all workers before processing a destination containing v2 indexes, including during rollback.
 
 Maintenance rules, which keep the index safe to trust:
 
-- A reference is added **before** its mapping is written, and a superseded one removed **after**. The index therefore only ever over-reports; it can never miss a live reference, which is the direction that would let cleanup GC content still in use.
+- A reference is added **before** its mapping is written, and a superseded one removed **after**. A complete index therefore only ever over-reports. Once the 1,000-key cap is exceeded, its overflow marker requires a full mapping scan; the stored sample may omit live references and must never be trusted for GC.
 - Cleanup confirms each remaining reference against the mapping it names (one GET per reference) and rewrites the index without the stale ones, so an interrupted run cannot pin content forever.
-- Content with no `refs/<id>.json` — written before the index existed, or with the index deleted out of band — falls back to the full `mappings/` scan once, and the result is backfilled.
+- Content with no `refs/<id>.json` — written before the index existed, or with the index deleted out of band — falls back to a full `mappings/` scan. The result is backfilled within the cap. An overflowed index continues to require a scan until a later complete scan fits within the cap.
 - `refs/<id>.json` lives outside `by-id/`, which is the prefix served to players: the index names source keys, which are private and span every source that deduped onto the content. Keeping it out also leaves `by-id/` genuinely immutable for caching. Cleanup deletes it explicitly when the content is GC'd.
 
 Read-modify-write on `refs/<id>.json` is unsynchronized, which is safe because a destination bucket is written by exactly one runner at a time (global lock) and destination buckets must be unique per run.
