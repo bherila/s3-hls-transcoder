@@ -156,7 +156,7 @@ Off by default. When enabled, runs once per bucket pair after all source keys ha
 3. **Compute orphans:** mappings whose decoded source key is NOT in the live set AND whose `sourceBucket`/`sourceEndpoint` match the pair being cleaned. Mappings written by another pair — or by a version that predates those fields — are skipped.
 4. **Group orphans by `contentId`.**
 5. **For each contentId in the orphan set:**
-   - Read `refs/<contentId>.json` for the source keys that reference it. If the object is absent, fall back to `findMappingsForContentId(contentId)` (a full `mappings/` scan) and backfill the index from the result.
+   - Read `refs/<contentId>.json` for the source keys that reference it. The index is capped at 1,000 keys so duplicate uploads cannot cause unbounded read-modify-write amplification. Complete indexes use version 1; overflowed, incomplete indexes use version 2 so older v1-only readers reject them rather than treating a sample as complete. If the object is absent or marked `overflow`, fall back to `findMappingsForContentId(contentId)` (a full `mappings/` scan) and backfill a bounded index from the result.
    - Confirm each referenced key that is not itself an orphan: read `mappings/<key>.json` and keep the reference only if it exists and still names this contentId. This yields `liveCount` and prunes references left behind by interrupted runs.
    - If `liveCount == 0` → delete `by-id/<contentId>/` (recursive), delete `fingerprints/<contentId>.bin`, delete `refs/<contentId>.json`, and remove the index entry.
    - If `liveCount > 0` → leave the transcoded output and fingerprint in place (other live source paths still use it) and rewrite `refs/<contentId>.json` with the surviving references.

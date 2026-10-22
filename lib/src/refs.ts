@@ -8,6 +8,7 @@ import { findMappingsForContentId } from "./mapping.js";
 import { isNotFound } from "./s3.js";
 
 const REFS_PREFIX = "refs/";
+const MAX_INDEXED_REFS = 1000;
 
 /**
  * Reverse index for one content ID: the source keys whose mapping currently
@@ -17,13 +18,16 @@ const REFS_PREFIX = "refs/";
  * across every source that deduped onto the same content. Keeping it out also
  * leaves `by-id/` genuinely immutable for caching.
  *
- * It exists so refcount decisions cost one GET per content ID instead of a full
- * `mappings/` scan (see {@link findMappingsForContentId}).
+ * Up to 1,000 entries make refcount decisions cost one GET per content ID. More
+ * highly shared content is marked as overflow so cleanup can safely scan
+ * mappings without allowing this object to grow without bound.
  */
 export interface ContentRefs {
   version: number;
   contentId: string;
   sourceKeys: string[];
+  /** True when this bounded index is incomplete and cleanup must scan mappings. */
+  overflow?: boolean;
   updatedAt: string;
 }
 
@@ -66,23 +70,38 @@ export async function readRefs(
     if (isNotFound(err)) return null;
     throw err;
   }
-  if (refs.version !== 1) {
+  if (refs.version !== 1 && refs.version !== 2) {
     throw new Error(`Unsupported refs version ${refs.version} for ${contentId}`);
   }
   return refs;
 }
 
-/** Overwrites a content ID's reverse index with `sourceKeys`, sorted and deduped. */
+/** Writes a bounded, sorted, deduped index; overflow falls back to mappings. */
 export async function writeRefs(
   client: S3Client,
   bucket: string,
   contentId: string,
   sourceKeys: readonly string[],
 ): Promise<void> {
+  const uniqueKeys: string[] = [];
+  const seen = new Set<string>();
+  let overflow = false;
+  for (const key of sourceKeys) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (uniqueKeys.length === MAX_INDEXED_REFS) {
+      overflow = true;
+      break;
+    }
+    uniqueKeys.push(key);
+  }
+  uniqueKeys.sort();
   const refs: ContentRefs = {
-    version: 1,
+    // v1 readers reject v2, so a rollback cannot trust an incomplete sample.
+    version: overflow ? 2 : 1,
     contentId,
-    sourceKeys: [...new Set(sourceKeys)].sort(),
+    sourceKeys: uniqueKeys,
+    ...(overflow ? { overflow: true } : {}),
     updatedAt: new Date().toISOString(),
   };
   await client.send(
@@ -111,6 +130,10 @@ export async function addRef(
   seedFromScan: boolean,
 ): Promise<void> {
   const refs = await readRefs(client, bucket, contentId);
+  // Once the bounded index overflows, cleanup deliberately falls back to a
+  // mappings scan. Avoid rewriting an ever-growing attacker-controlled list
+  // on every subsequent dedup hit.
+  if (refs?.overflow) return;
   if (refs?.sourceKeys.includes(sourceKey)) return;
   // `seedFromScan` says whether the content pre-dates this write (a dedup hit).
   // If it does, recover its existing references first: seeding the index with
@@ -122,7 +145,11 @@ export async function addRef(
   const existing =
     refs?.sourceKeys ??
     (seedFromScan ? await findMappingsForContentId(client, bucket, contentId) : []);
-  await writeRefs(client, bucket, contentId, [...existing, sourceKey]);
+  if (existing.length > MAX_INDEXED_REFS) {
+    await writeRefs(client, bucket, contentId, existing);
+  } else {
+    await writeRefs(client, bucket, contentId, [...existing, sourceKey]);
+  }
 }
 
 /**
@@ -137,6 +164,9 @@ export async function removeRef(
 ): Promise<void> {
   const refs = await readRefs(client, bucket, contentId);
   if (!refs) return;
+  // The stored keys are only a sample. Removing from it could incorrectly make
+  // the index look complete; cleanup will rebuild it from mappings.
+  if (refs.overflow) return;
   const remaining = refs.sourceKeys.filter((k) => k !== sourceKey);
   if (remaining.length === refs.sourceKeys.length) return;
   await writeRefs(client, bucket, contentId, remaining);
@@ -155,7 +185,7 @@ export async function listRefs(
   persist: boolean,
 ): Promise<string[]> {
   const refs = await readRefs(client, bucket, contentId);
-  if (refs) return refs.sourceKeys;
+  if (refs && !refs.overflow) return refs.sourceKeys;
 
   const sourceKeys = await findMappingsForContentId(client, bucket, contentId);
   if (persist) await writeRefs(client, bucket, contentId, sourceKeys);
