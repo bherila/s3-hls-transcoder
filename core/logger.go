@@ -26,6 +26,7 @@ type Fields map[string]any
 // go to stderr — matching the original implementation.
 type Logger struct {
 	threshold int
+	fields    Fields
 }
 
 // NewLogger returns a Logger that drops anything below level.
@@ -46,6 +47,9 @@ func (l *Logger) emit(level LogLevel, msg string, fields Fields) {
 		"level": string(level),
 		"msg":   msg,
 	}
+	for k, v := range l.fields {
+		entry[k] = v
+	}
 	for k, v := range fields {
 		entry[k] = v
 	}
@@ -64,3 +68,15 @@ func (l *Logger) Debug(msg string, fields Fields) { l.emit(LevelDebug, msg, fiel
 func (l *Logger) Info(msg string, fields Fields)  { l.emit(LevelInfo, msg, fields) }
 func (l *Logger) Warn(msg string, fields Fields)  { l.emit(LevelWarn, msg, fields) }
 func (l *Logger) Error(msg string, fields Fields) { l.emit(LevelError, msg, fields) }
+
+// WithFields derives an immutable context for all nested pipeline log messages.
+func (l *Logger) WithFields(fields Fields) *Logger {
+	merged := Fields{}
+	for k, v := range l.fields {
+		merged[k] = v
+	}
+	for k, v := range fields {
+		merged[k] = v
+	}
+	return &Logger{threshold: l.threshold, fields: merged}
+}

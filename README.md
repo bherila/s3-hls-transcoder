@@ -27,6 +27,9 @@ wake on Redis or an HTTP endpoint — see `core.Serve` and
   decisioning stays in the consuming app. Requires the `pdq-photo-hasher` binary
   on `PATH` (or `PDQ_HASHER_PATH`); see [`Dockerfile.imagehasher`](./Dockerfile.imagehasher).
 
+For a single resource-limited Go worker serving independent bucket pairs, see
+[Multi-tenant operation](./docs/MULTI_TENANT.md).
+
 Each package has its own README with platform-specific setup. Configuration is via environment variables; see [`local/.env.sample`](./local/.env.sample) for the canonical list.
 
 ## Prerequisites

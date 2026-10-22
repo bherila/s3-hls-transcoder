@@ -92,10 +92,10 @@ Strict sequence. Steps numbered for cross-reference; side effects called out exp
 
 1. **Load + validate config.** Refuses to start on missing required vars or on source/destination overlap (§1.2).
 
-2. **For each bucket pair** (sequentially):
+2. **For each bucket pair** (TypeScript: sequentially; Go: one source per pair per round with one active source pipeline globally). Go daemon runners retain the next tenant between sweeps; bucket locks remain held across turns. See [multi-tenant operation](./docs/MULTI_TENANT.md):
    1. **Acquire global lock** at `<dest>/.transcoder.lock` via conditional PUT (`If-None-Match: *`).
       - Success → proceed.
-      - Held by live worker (within `lockTtlSeconds`) → exit cleanly, return.
+      - Held by live worker (within `lockTtlSeconds`) → skip this pair cleanly.
       - Held but stale (past TTL) → DELETE and re-PUT atomically; if a third worker beat us, return.
    2. **Scan source bucket** with pagination. For each video key, in listing order:
       1. **Mapping cache check.** GET `<dest>/mappings/<source-key>.json`. If it exists with matching `sourceEtag` AND `sourceSize` → skip (counted as `cached`) — unless `REENCODE_BELOW_VERSION` is set and the mapping's `encoderVersion` is older, in which case the source is probed via a presigned URL and either restamped (layout already correct) or re-encoded (step 3 is then skipped for it). See PLAN.md "Re-encoding outputs from older encoders". _(Go worker only.)_
@@ -122,11 +122,11 @@ Strict sequence. Steps numbered for cross-reference; side effects called out exp
 
 ### 4.1 Budget exit
 
-Before each iteration of step 2.2, the worker checks elapsed time against `BUDGET_MULTIPLIER × MAX_RUNTIME_SECONDS`. If exceeded, the loop ends, the lock is released, and the run exits. The next cron tick picks up where this one left off.
+The budget is shared across all pairs. The TypeScript worker checks it before each iteration of step 2.2. The Go worker additionally applies a context deadline to in-flight S3 work and subprocesses, releases locks with a separate bounded context, and does not tombstone interrupted sources. The next sweep lists again from the beginning and skips cached mappings; Go daemon mode starts with the pair following the last source attempted.
 
 ### 4.2 Failure handling
 
-- A failure on any single source key is logged, increments `failed`, and the loop continues with the next key. The lease for the failed key is NOT released — it expires after `lockTtlSeconds` (so a crashed transcode is retried by a later run, but a deterministically-broken file isn't retried in a tight loop).
+- A failure on any single source key is logged, increments `failed`, and the loop continues with the next key. The Go worker releases the per-video lease on success, error or cancellation, and uses error tombstones to limit repeated failures on the same source version. The TypeScript worker leaves failed leases to expire after `lockTtlSeconds`.
 - A failure to acquire the global lock exits cleanly (return; not throw).
 - A failure during config load or overlap validation throws and aborts the run.
 

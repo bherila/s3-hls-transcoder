@@ -102,3 +102,28 @@ func TestLadderRungNamesMustBePublishable(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfigTenantLabels(t *testing.T) {
+	t.Setenv("BUCKETS_CONFIG_FILE", "")
+	t.Setenv("BUCKETS_CONFIG", `[
+        {"name":"vora","source":{"bucket":"src-a","endpoint":"https://r2.example.com"},"dest":{"bucket":"dest-a","endpoint":"https://r2.example.com"},"accessKeyId":"ak-a","secretAccessKey":"sk-a"},
+        {"name":"kath","source":{"bucket":"src-b","endpoint":"https://r2.example.com"},"dest":{"bucket":"dest-b","endpoint":"https://r2.example.com"},"accessKeyId":"ak-b","secretAccessKey":"sk-b"}
+    ]`)
+	cfg, err := LoadConfig(PlatformLocal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Pairs[0].Name != "vora" || cfg.Pairs[1].Name != "kath" {
+		t.Fatalf("tenant labels lost")
+	}
+	if cfg.Pairs[0].Dest.AccessKeyID != "ak-a" || cfg.Pairs[1].Dest.AccessKeyID != "ak-b" {
+		t.Fatal("tenant credentials mixed")
+	}
+	for _, name := range []string{"vora", " kath "} {
+		pairs := append([]BucketPair(nil), cfg.Pairs...)
+		pairs[1].Name = name
+		if err := validateNoOverlaps(pairs); err == nil {
+			t.Fatalf("invalid tenant label %q accepted", name)
+		}
+	}
+}

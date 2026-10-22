@@ -4,6 +4,19 @@ Testing guide for `s3-hls-transcoder`. See [CLAUDE.md](./CLAUDE.md) for project 
 
 ## Running tests
 
+For the Go worker images (including multi-tenant scheduling), run:
+
+```bash
+go vet ./...
+go build ./...
+REQUIRE_FFMPEG=1 go test ./... -race
+```
+
+`core/scheduler_test.go` exercises round-robin order, independent tenant
+credentials and bucket routing, shared deadlines, interruption recovery and
+lock/scan failure isolation against a local S3 HTTP fake. No live buckets are
+used.
+
 ```bash
 pnpm test          # all packages (lib + entrypoints)
 pnpm -C lib test   # lib only

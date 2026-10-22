@@ -30,6 +30,8 @@ type BucketConfig struct {
 
 // BucketPair is one source→dest transcoding job.
 type BucketPair struct {
+	// Name is an optional operator label, never part of object paths.
+	Name   string
 	Source BucketConfig
 	Dest   BucketConfig
 }
@@ -56,7 +58,7 @@ type Config struct {
 	CleanupDryRun         bool
 	ErrorTombstones       bool
 	TombstoneMaxAttempts  int
-	MaxConcurrency        int
+	MaxConcurrency        int // reserved: Go source jobs remain globally serial
 	// ReencodeBelowVersion, when set, re-checks outputs whose mapping was
 	// written by an older encoder and re-encodes those the old encoder laid
 	// out wrongly (see legacyOutputNeedsReencode). Empty disables it.
@@ -162,6 +164,7 @@ type bucketInput struct {
 }
 
 type pairInput struct {
+	Name            string       `json:"name"`
 	Source          *bucketInput `json:"source"`
 	Dest            *bucketInput `json:"dest"`
 	AccessKeyID     string       `json:"accessKeyId"`
@@ -210,7 +213,7 @@ func parseBucketsConfigJSON(raw []byte, sourceName string) ([]BucketPair, error)
 		if err != nil {
 			return nil, err
 		}
-		pairs = append(pairs, BucketPair{Source: src, Dest: dst})
+		pairs = append(pairs, BucketPair{Name: in.Name, Source: src, Dest: dst})
 	}
 	return pairs, nil
 }
@@ -290,6 +293,15 @@ func requiredBucket(prefix string) (BucketConfig, error) {
 func validateNoOverlaps(pairs []BucketPair) error {
 	if len(pairs) == 0 {
 		return fmt.Errorf("at least one bucket pair must be configured")
+	}
+	names := map[string]bool{}
+	for i, pair := range pairs {
+		if pair.Name != "" {
+			if strings.TrimSpace(pair.Name) != pair.Name || names[pair.Name] {
+				return fmt.Errorf("pairs[%d].name must be unique and have no surrounding whitespace", i)
+			}
+			names[pair.Name] = true
+		}
 	}
 	for i := range pairs {
 		for j := i + 1; j < len(pairs); j++ {

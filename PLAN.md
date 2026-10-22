@@ -229,10 +229,16 @@ Bucket pairs are configured one of three ways, in priority order:
 2. `BUCKETS_CONFIG` — JSON literal with an array of pairs.
 3. `SOURCE_*` / `DEST_*` env vars — convenient single-pair fallback.
 
+The Go workers schedule one source per pair per round with one active pipeline
+across all pairs. Daemon mode retains the next tenant across sweeps. See
+[multi-tenant operation](./docs/MULTI_TENANT.md) for isolation, shared deadlines
+and migration from separate containers. TypeScript workers remain sequential.
+
 Each pair JSON object:
 
 ```jsonc
 {
+  "name": "my-app", // optional unique Go worker log label
   "source": {
     "bucket": "videos_source",
     "endpoint": "https://<account>.r2.cloudflarestorage.com",
@@ -276,7 +282,7 @@ Each pair JSON object:
 | `PERCEPTUAL_DRY_RUN`         |    no    | `false`              | Retained for compatibility; perceptual matches are always non-destructive     |
 | `CLEANUP_DELETED_SOURCES`    |    no    | `false`              | If `true`, run a refcount-aware orphan-mapping GC pass each invocation        |
 | `CLEANUP_DRY_RUN`            |    no    | `false`              | If `true`, cleanup pass logs without deleting                                 |
-| `MAX_CONCURRENCY`            |    no    | `1`                  | Source files processed in parallel within one run                             |
+| `MAX_CONCURRENCY`            |    no    | `1`                  | Reserved; Go workers process one source at a time across all pairs            |
 | `LOG_LEVEL`                  |    no    | `info`               | `debug` / `info` / `warn` / `error`                                           |
 | `POLL_FALLBACK_SECONDS`      |    no    | —                    | Run as a daemon: sweep cadence, and the safety net behind wake sources        |
 | `REDIS_URL`                  |    no    | —                    | Wake on `LPUSH` to `TRANSCODE_QUEUE` (see "Trigger modes")                    |
