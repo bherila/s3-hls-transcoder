@@ -2,7 +2,7 @@
 
 Single-process Node entrypoint suitable for cron on any host with ffmpeg installed: a laptop, a VPS, or an AWS Lightsail instance.
 
-See **[../PLAN.md](../PLAN.md)** for architecture and **[../CLAUDE.md](../CLAUDE.md)** for conventions.
+See **[../PLAN.md](../PLAN.md)** for architecture and **[../AGENTS.md](../AGENTS.md)** for conventions.
 
 ## Setup
 

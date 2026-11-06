@@ -2,7 +2,7 @@
 
 Containerized Node entrypoint deployed via Cloudflare Containers. The container runs a one-shot transcoding pass and exits.
 
-See **[../PLAN.md](../PLAN.md)** for architecture and **[../CLAUDE.md](../CLAUDE.md)** for conventions.
+See **[../PLAN.md](../PLAN.md)** for architecture and **[../AGENTS.md](../AGENTS.md)** for conventions.
 
 ## Prerequisites
 

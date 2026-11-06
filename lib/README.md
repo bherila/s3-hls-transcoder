@@ -2,7 +2,7 @@
 
 All real work lives here. Three entrypoint packages (`aws/`, `cloudflare/`, `local/`) consume this lib via `workspace:*`.
 
-See **[../PLAN.md](../PLAN.md)** for architecture and the planned API surface, and **[../CLAUDE.md](../CLAUDE.md)** for conventions.
+See **[../PLAN.md](../PLAN.md)** for architecture and the planned API surface, and **[../AGENTS.md](../AGENTS.md)** for conventions.
 
 ## Develop
 

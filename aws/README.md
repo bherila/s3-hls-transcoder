@@ -2,7 +2,7 @@
 
 Lambda container image. Triggered by an EventBridge cron rule.
 
-See **[../PLAN.md](../PLAN.md)** for architecture and **[../CLAUDE.md](../CLAUDE.md)** for conventions.
+See **[../PLAN.md](../PLAN.md)** for architecture and **[../AGENTS.md](../AGENTS.md)** for conventions.
 
 ## Configuration
 

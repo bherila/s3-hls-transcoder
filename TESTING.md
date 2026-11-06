@@ -1,6 +1,6 @@
 # TESTING.md
 
-Testing guide for `s3-hls-transcoder`. See [CLAUDE.md](./CLAUDE.md) for project conventions, [SPEC.md](./SPEC.md) for the behavioral contract being tested.
+Testing guide for `s3-hls-transcoder`. See [AGENTS.md](./AGENTS.md) for project conventions, [SPEC.md](./SPEC.md) for the behavioral contract being tested.
 
 ## Running tests
 
