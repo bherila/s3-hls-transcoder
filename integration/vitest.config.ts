@@ -14,11 +14,8 @@ export default defineConfig({
     // Run serially – each test brings up its own container anyway, and
     // parallel containers multiply Docker resource usage for no benefit.
     pool: "forks",
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
+    maxWorkers: 1,
+    fileParallelism: false,
     reporters: ["verbose"],
   },
 });
