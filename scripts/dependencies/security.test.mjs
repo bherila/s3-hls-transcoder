@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { URL } from "node:url";
 
 function consumer(base, chain) {
   let require = createRequire(new URL(base, import.meta.url));
