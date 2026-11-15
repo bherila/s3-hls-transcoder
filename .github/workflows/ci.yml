@@ -61,6 +61,8 @@ jobs:
 
       - run: pnpm lint
 
+      - run: pnpm test:dependencies
+
       # Build first: the entrypoint and integration packages typecheck against
       # lib/dist, not lib/src.
       - run: pnpm build
